@@ -1,0 +1,2 @@
+# 시가총액 20억 달러 미만이라도 추세 레이더에 꼭 넣고 싶은 종목을 한 줄에 하나씩 적어요.
+# Tickers to include even below the $2B market-cap cut, one per line.

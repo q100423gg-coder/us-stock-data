@@ -1,0 +1,57 @@
+name: nightly-prices
+
+on:
+  schedule:
+    # 22:17 UTC, Mon-Fri: about 2 hours after the US close (1 hour in winter), 07:17 KST the next morning
+    - cron: "17 22 * * 1-5"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "fetch.py"
+      - "extra_tickers.txt"
+      - ".github/workflows/nightly-prices.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-prices
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install --quiet --upgrade yfinance pandas pyarrow
+
+      - name: Previous data (kept for tickers that fail today)
+        run: gh release download data --pattern prices.parquet --dir prev || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Fetch
+        run: python fetch.py
+
+      - name: Publish release assets
+        run: |
+          gh release view data >/dev/null 2>&1 || gh release create data --title "Daily US prices" --notes "Updated by the nightly-prices workflow. Download: releases/download/data/<file>"
+          gh release upload data out/prices.parquet out/universe.csv out/manifest.json --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Record the run (repository activity keeps the schedule enabled)
+        run: |
+          cp out/manifest.json manifest.json
+          git config user.name "nightly-prices-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git diff --staged --quiet || { git commit -q -m "data: $(jq -r .asof manifest.json)"; git push -q; }
