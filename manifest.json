@@ -1,0 +1,12 @@
+{
+ "updated_at": "2026-09-27T14:47:00Z",
+ "asof": "2026-09-25",
+ "tickers": 2066,
+ "rows": 1097077,
+ "universe": 2066,
+ "min_cap": 2000000000.0,
+ "start": "2024-07-19",
+ "failed": 0,
+ "kept_from_previous": 0,
+ "failed_tickers": []
+}
