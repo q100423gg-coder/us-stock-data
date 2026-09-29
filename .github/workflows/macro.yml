@@ -29,6 +29,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install
+        run: pip install --quiet requests
+
       - name: Fetch FRED series and the Nasdaq earnings calendar
         run: timeout 720 python macro.py
 

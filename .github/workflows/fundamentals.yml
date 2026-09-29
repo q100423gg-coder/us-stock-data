@@ -1,0 +1,66 @@
+name: fundamentals
+
+on:
+  # right after the nightly price download, so the bundle carries the same close
+  workflow_run:
+    workflows: ["nightly-prices"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      budget:
+        description: "Fetch time budget in seconds"
+        default: "1500"
+      only:
+        description: "Comma-separated tickers to refetch now (empty = the normal stalest-first run)"
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - "fundamentals.py"
+      - ".github/workflows/fundamentals.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fundamentals
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install --quiet --upgrade yfinance pandas pyarrow requests
+
+      - name: Previous data (store, universe, prices, macro, earnings calendar)
+        run: |
+          mkdir -p prev
+          for f in fund_store.json.gz universe.csv prices.parquet macro.json earnings_calendar.json; do
+            gh release download data --pattern "$f" --dir prev --clobber || echo "no $f yet"
+          done
+          ls -la prev
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Fetch company data and build the page bundle
+        run: timeout 2700 python fundamentals.py all
+        env:
+          FUND_BUDGET_SEC: ${{ github.event.inputs.budget || '1500' }}
+          FUND_ONLY: ${{ github.event.inputs.only || '' }}
+
+      - name: Publish release assets
+        if: always()
+        run: |
+          for f in out/fund_store.json.gz out/analysis_bundle.tar.gz out/fund_status.json; do
+            if [ -s "$f" ]; then gh release upload data "$f" --clobber; fi
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -41,14 +41,17 @@ SERIES = [
     ("UNRATE", "UNRATE", "실업률", "%", "labor", None, "M", "일할 의사가 있는데 일자리가 없는 사람의 비율이에요."),
     ("PAYEMS", "NFP", "비농업 고용 증감", "천 명", "labor", "diff", "M", "농업을 뺀 일자리가 한 달 동안 몇 개 늘었는지예요."),
     ("ICSA", "CLAIMS", "신규 실업수당 청구", "천 건", "labor", "k", "W", "매주 새로 실업수당을 신청한 사람 수로, 고용 변화를 가장 빨리 보여줘요."),
+    ("SAHMREALTIME", "SAHM", "삼의 법칙 침체 지표", "%p", "labor", None, "M", "실업률 3개월 평균이 지난 1년 최저보다 0.5%p 이상 오르면 침체 신호로 봐요."),
     ("CES0500000003", "WAGE", "시간당 임금 상승률", "% 전년비", "labor", "yoy", "M", "임금이 빠르게 오르면 서비스 물가가 잘 안 내려가요."),
     ("A191RL1Q225SBEA", "GDP", "실질 GDP 성장률", "% 연율", "growth", None, "Q", "물가를 뺀 경제 성장률을 연율로 환산한 값이에요."),
     ("INDPRO", "INDPRO", "산업생산 증가율", "% 전년비", "growth", "yoy", "M", "공장·광업·유틸리티 생산이 1년 전보다 얼마나 늘었는지예요."),
     ("RSAFS", "RETAIL", "소매판매 증가율", "% 전년비", "growth", "yoy", "M", "미국 경제의 70%를 차지하는 소비의 흐름이에요."),
+    ("HOUST", "HOUST", "주택 착공 건수", "천 호(연율)", "growth", None, "M", "새로 짓기 시작한 주택 수예요. 금리에 민감해서 경기 선행 지표로 써요."),
     ("UMCSENT", "UMICH", "미시간대 소비자심리", "pt", "growth", None, "M", "소비자가 느끼는 경기와 살림살이 전망이에요."),
     ("M2SL", "M2", "M2 통화량 증가율", "% 전년비", "liquidity", "yoy", "M", "시중에 풀린 돈이 1년 전보다 얼마나 늘었는지예요."),
     ("WALCL", "FEDBS", "연준 총자산", "조 달러", "liquidity", "tn", "W", "연준이 양적완화로 늘리고 양적긴축으로 줄이는 대차대조표 규모예요."),
     ("BAMLH0A0HYM2", "HY", "하이일드 스프레드", "%p", "liquidity", None, "D", "투기등급 회사채가 국채보다 더 주는 금리예요. 벌어지면 신용 불안이에요."),
+    ("BAMLC0A0CM", "IG", "투자등급 회사채 스프레드", "%p", "liquidity", None, "D", "우량 회사채가 국채보다 더 주는 금리예요. 기업 자금 조달 여건을 보여줘요."),
     ("NFCI", "NFCI", "금융여건지수(시카고 연은)", "지수", "liquidity", None, "W", "0보다 크면 평소보다 긴축적, 작으면 완화적인 금융 환경이에요."),
     ("VIXCLS", "VIX", "VIX 변동성지수", "pt", "market", None, "D", "S&P 500 옵션에 담긴 향후 30일 변동성 기대예요. 30 위면 공포 구간이에요."),
     ("DTWEXBGS", "USD", "달러 인덱스(광의)", "지수", "market", None, "D", "주요 교역국 통화 대비 달러 가치예요. 달러가 강하면 해외 매출 비중이 큰 기업에 불리해요."),
@@ -76,8 +79,24 @@ def get(url, headers=None, tries=2, timeout=20):
     raise last
 
 
-def fred(sid):
-    text = get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}&cosd={START}", timeout=25)
+def fred(sid, start=START):
+    """One FRED series as [(date, value)] from the public fredgraph.csv endpoint (no API key).
+
+    Uses python-requests with its default User-Agent: FRED's edge silently stalls urllib requests
+    that present a browser User-Agent (the first runs timed out on every series)."""
+    import requests
+    last = None
+    for i in range(2):
+        try:
+            r = requests.get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}&cosd={start}", timeout=25)
+            r.raise_for_status()
+            text = r.text
+            break
+        except Exception as e:
+            last = e
+            time.sleep(2 * (i + 1))
+    else:
+        raise last
     rows = list(csv.reader(io.StringIO(text)))
     obs = []
     for r in rows[1:]:
@@ -123,6 +142,40 @@ def thin_daily(obs):
     return sorted(weekly.values()) + new
 
 
+CURVE = [("DGS1MO", "1개월"), ("DGS3MO", "3개월"), ("DGS6MO", "6개월"), ("DGS1", "1년"), ("DGS2", "2년"),
+         ("DGS3", "3년"), ("DGS5", "5년"), ("DGS7", "7년"), ("DGS10", "10년"), ("DGS20", "20년"), ("DGS30", "30년")]
+
+
+def curve():
+    """Treasury yield curve on the latest date, about a month ago and about a year ago."""
+    from concurrent.futures import ThreadPoolExecutor
+    start = (date.today() - timedelta(days=420)).isoformat()
+    def one(sid):
+        try:
+            return sid, dict(fred(sid, start))
+        except Exception as e:
+            STATUS["fred"][sid] = {"ok": False, "err": f"{type(e).__name__}: {e}"[:200]}
+            return sid, {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        got = dict(pool.map(one, [c[0] for c in CURVE]))
+    ten = got.get("DGS10") or {}
+    if not ten:
+        return None
+    dates = sorted(ten)
+    last = dates[-1]
+    def on_or_before(target):
+        c = [d for d in dates if d <= target]
+        return c[-1] if c else None
+    picks = {"now": last,
+             "m1": on_or_before((date.fromisoformat(last) - timedelta(days=30)).isoformat()),
+             "y1": on_or_before((date.fromisoformat(last) - timedelta(days=365)).isoformat())}
+    rows = {}
+    for k, d in picks.items():
+        if d:
+            rows[k] = {"d": d, "v": [got.get(sid, {}).get(d) for sid, _ in CURVE]}
+    return {"tenors": [n for _, n in CURVE], "ids": [sid for sid, _ in CURVE], "rows": rows}
+
+
 def fetch_one(spec):
     sid = spec[0]
     t0 = time.time()
@@ -138,7 +191,7 @@ def fetch_one(spec):
 def macro():
     from concurrent.futures import ThreadPoolExecutor
     series, failed = {}, []
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(fetch_one, SERIES))
     for (sid, key, name, unit, group, how, freq, desc), raw, err in results:
         if err is not None or not raw:
@@ -150,8 +203,13 @@ def macro():
         nd = 3 if unit in ("조 달러",) or key == "NFCI" else 2
         series[key] = dict(id=sid, name=name, unit=unit, group=group, freq=freq, desc=desc,
                            obs=[[d, round(v, nd)] for d, v in obs])
+    try:
+        cv = curve()
+    except Exception as e:
+        cv = None
+        failed.append(f"curve: {type(e).__name__}")
     return dict(updated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                groups=[dict(id=g, name=n) for g, n in GROUPS], series=series, failed=failed)
+                groups=[dict(id=g, name=n) for g, n in GROUPS], series=series, curve=cv, failed=failed)
 
 
 def earnings_calendar(days=80, budget=300):
