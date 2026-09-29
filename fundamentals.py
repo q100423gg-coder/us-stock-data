@@ -888,8 +888,11 @@ def screener_row(t, urow, rec, px, calendar, fx_rates=None):
     return row
 
 
+FX_QUOTE = {}    # currency -> (units per USD as quoted, quote time in epoch seconds)
+
+
 def fetch_fx(currencies):
-    """{currency: USD per unit} from Yahoo's FX quotes (USDTWD=X, inverted)"""
+    """{currency: USD per unit} from Yahoo's FX quotes (USDTWD=X, inverted); FX_QUOTE keeps the raw quotes"""
     out = {}
     for cur in sorted(currencies):
         if not re.fullmatch(r"[A-Z]{3}", cur or ""):
@@ -901,9 +904,11 @@ def fetch_fx(currencies):
             v = meta.get("regularMarketPrice")
             if isinstance(v, (int, float)) and v > 0:
                 out[cur] = round(1.0 / float(v), 10)
+                FX_QUOTE[cur] = (float(v), meta.get("regularMarketTime"))
         except Exception as e:
             print(f"fx {cur}: {type(e).__name__}: {e}", flush=True)
     STATUS["fx"] = out
+    STATUS["fx_quote"] = FX_QUOTE
     return out
 
 
@@ -919,7 +924,8 @@ def phase_bundle(universe, store, calendar):
         shutil.rmtree(site)
     (site / "data" / "f").mkdir(parents=True)
     di = {d: i for i, d in enumerate(dates)}
-    fx_rates = fetch_fx({((r.get("p") or {}).get("fcur") or "USD").upper() for r in store["tickers"].values()} - {"USD"})
+    # reporting currencies of foreign filers, plus KRW for the page's won amounts
+    fx_rates = fetch_fx(({((r.get("p") or {}).get("fcur") or "USD").upper() for r in store["tickers"].values()} - {"USD"}) | {"KRW"})
     cols, shards = {}, [dict() for _ in range(NSHARDS)]
     for urow in universe:
         t = urow["ticker"]
@@ -940,7 +946,9 @@ def phase_bundle(universe, store, calendar):
     for b in ("SPY", "QQQ"):
         if b in prices:
             bench[b] = {"i0": di[prices[b][0][0]], "c": delta_cents(prices[b][1])}
-    uni = {"v": 1, "dates": dates, "sectors": [[s, SECTOR_KO[s]] for s in SECTORS], "bench": bench, "cols": cols, "n": n}
+    krw, krw_at = FX_QUOTE.get("KRW", (None, None))
+    uni = {"v": 1, "dates": dates, "sectors": [[s, SECTOR_KO[s]] for s in SECTORS], "bench": bench, "cols": cols, "n": n,
+           "krw": round(krw, 2) if krw else None, "krw_at": krw_at}            # won per dollar and the quote's time
     (site / "data" / "universe.json").write_text(json.dumps(uni, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
     sizes = []
     for i, sh in enumerate(shards):
