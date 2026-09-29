@@ -829,10 +829,15 @@ def screener_row(t, urow, rec, px, calendar, fx_rates=None):
     fcur = (p.get("fcur") or "USD").upper()
     fx = 1.0 if fcur == "USD" else (fx_rates or {}).get(fcur)
     usd = (lambda v: v * fx if (v is not None and fx) else None)
-    rev, ebitda, fcf = usd(k.get("rev")), usd(k.get("ebitda")), usd(k.get("fcf"))
+    fs = (rec or {}).get("fs") or {}
+    # free cash flow = operating cash flow - capex over the last four quarters, as in the statements; Yahoo's own
+    # "freeCashflow" is a levered figure that can be far off (and banks without capex keep Yahoo's value, usually none)
+    tt = fs.get("t") or {}
+    fcf_ttm = (tt.get("fcf") or [None, None])[1] if tt.get("capex") else None
+    rev, ebitda = usd(k.get("rev")), usd(k.get("ebitda"))
+    fcf = usd(fcf_ttm) if fcf_ttm is not None else usd(k.get("fcf"))
     debt, cash = usd(k.get("debt")) or 0, usd(k.get("cash")) or 0
     ev_now = (mc_now + debt - cash) if mc_now and fx and (k.get("debt") is not None or k.get("cash") is not None) else None
-    fs = (rec or {}).get("fs") or {}
     eq_last = next((v for tbl in (fs.get("q"), fs.get("a")) if tbl and tbl.get("eq") for v in reversed(tbl["eq"]) if v is not None), None)
     ni_ttm = ((fs.get("t") or {}).get("ni") or [None, None])[1]
     tgt = (k.get("tgt") or [None])[0]
