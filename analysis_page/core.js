@@ -89,6 +89,29 @@ function fmtKo(vm) {
   if (won >= 1e4) return sg + Math.round(won / 1e4).toLocaleString("en-US") + "만 달러";
   return sg + Math.round(won).toLocaleString("en-US") + "달러";
 }
+// ---------------------------------------------------------------- won (KRW) alongside dollars
+const KRW = { rate: null, at: null, on: true };          // rate = KRW per USD from the nightly collector
+/** won amount -> "17,096원" / "70.5만 원" / "3,318억 원" / "464.5조 원" */
+function wonText(won) {
+  if (!isNum(won)) return "";
+  const a = Math.abs(won), sg = won < 0 ? "−" : "";
+  if (a >= 1e12) return sg + fmtN(a / 1e12, a >= 1e15 ? 0 : 1) + "조 원";
+  if (a >= 1e8) return sg + fmtN(a / 1e8, a >= 1e10 ? 0 : 1) + "억 원";
+  if (a >= 1e5) return sg + fmtN(a / 1e4, a >= 1e7 ? 0 : 1) + "만 원";
+  return sg + fmtN(a, 0) + "원";
+}
+/** dollars (a share price, a dividend, a pay package) -> won text, "" when off or unknown */
+function krwP(usd) { return KRW.on && KRW.rate && isNum(usd) ? wonText(usd * KRW.rate) : ""; }
+/** amounts in millions of the reporting currency; fx = USD per unit of that currency (1 for USD) */
+function krwM(vm, fx = 1) { return KRW.on && KRW.rate && isNum(vm) && isNum(fx) ? wonText(vm * fx * 1e6 * KRW.rate) : ""; }
+/** "$509.22" + " (70.5만 원)" */
+function withK(usdText, wonTxt) { return wonTxt ? `${usdText} (${wonTxt})` : usdText; }
+/** small muted second line under a value */
+function kLine(wonTxt, extra) {
+  const parts = [wonTxt, extra].filter(Boolean);
+  return parts.length ? h("small", { class: "krw" }, parts.join(" · ")) : null;
+}
+
 function fmtShares(vm) {                                       // share counts stored in millions
   if (!isNum(vm)) return "–";
   if (Math.abs(vm) >= 1000) return fmtN(vm / 1000, 2) + "B주";

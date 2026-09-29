@@ -72,7 +72,7 @@ async function renderHome() {
     if (!ev.length) { elist.append(h("p", { class: "note" }, "앞으로 일주일 안에 발표하는 주요 종목이 없어요.")); return; }
     for (const x of ev) elist.append(h("button", { type: "button", class: "erow", onclick: () => go("company", x.sym) },
       h("span", { class: "d" }, fmtD(x.d, "md") + " (" + WD[pd(x.d).getDay()] + ") ", h("span", { class: "tb " + x.time }, x.time === "bmo" ? "장전" : x.time === "amc" ? "장후" : "미정")),
-      h("span", { class: "nm" }, h("b", null, x.sym), dispName(x.sym)), h("span", { class: "r" }, isNum(x.mc) ? fmtM(x.mc * 1000) : "")));
+      h("span", { class: "nm" }, h("b", null, x.sym), dispName(x.sym)), h("span", { class: "r" }, isNum(x.mc) ? [fmtM(x.mc * 1000), kLine(krwM(x.mc * 1000))] : "")));
   }).catch(() => { clear(elist).append(h("p", { class: "note" }, "실적 일정을 불러오지 못했어요.")); });
   loadMacro().then((m) => {
     clear(strip);
@@ -89,6 +89,7 @@ function watchCard(t) {
     h("div", { class: "top1" }, h("span", { class: "sym" }, t), r && isNum(r.v) ? h("span", { class: "ab a" + r.v, style: { fontSize: "11px", padding: "0 7px 0 5px" } }, h("i"), RADAR_KO[r.v]) : null),
     h("span", { class: "nm" }, dispName(t)),
     h("div", { class: "px" }, h("b", null, fmtPx(r.c)), h("span", { class: cls(r.ch) }, fmtP(r.ch, 2))),
+    krwP(r.c) ? h("small", { class: "krw" }, "≈ " + krwP(r.c)) : null,
     h("div", { class: "meta" }, isNum(r.pe) ? h("span", null, "PER " + fmtN(r.pe, 1)) : null, isNum(r.r1y) ? h("span", null, "1년 " + fmtP(r.r1y, 0)) : null,
       r.nx && r.nx >= todayISO() ? h("span", null, "실적 " + fmtD(r.nx, "md")) : null));
   return b;
@@ -142,8 +143,8 @@ const PRESETS = [
 ];
 const SCR = { preset: "all", sector: -1, mc: 0, sp5: false, q: "", sort: "mc", dir: -1, shown: 100 };
 const SCOLS = [
-  ["mc", "시총", (r) => (isNum(r.mc) ? fmtM(r.mc * 1000) : "–")],
-  ["c", "주가", (r) => fmtPx(r.c)],
+  ["mc", "시총", (r) => (isNum(r.mc) ? [fmtM(r.mc * 1000), kLine(krwM(r.mc * 1000))] : "–")],
+  ["c", "주가", (r) => [fmtPx(r.c), kLine(krwP(r.c))]],
   ["ch", "1일", (r) => fmtP(r.ch, 1), true],
   ["r1m", "1개월", (r) => fmtP(r.r1m, 1), true],
   ["r1y", "1년", (r) => fmtP(r.r1y, isNum(r.r1y) && Math.abs(r.r1y) < 10 ? 1 : 0), true],
@@ -278,7 +279,7 @@ async function renderCalendar() {
         box.append(h("button", { type: "button", class: "crow", onclick: () => go("company", x.sym) },
           h("span", { class: "tb " + x.time }, x.time === "bmo" ? "장전" : x.time === "amc" ? "장후" : "미정"),
           h("span", { class: "nm" }, h("b", null, x.sym), dispName(x.sym)),
-          h("span", { class: "r" }, (x.eps ? "EPS " + x.eps + " · " : "") + (isNum(x.r.mc) ? fmtM(x.r.mc * 1000) : ""))));
+          h("span", { class: "r" }, (x.eps ? "EPS " + x.eps + " · " : "") + (isNum(x.r.mc) ? fmtM(x.r.mc * 1000) : ""), isNum(x.r.mc) ? kLine(krwM(x.r.mc * 1000)) : null)));
       }
       if (list.length > 40) box.append(h("p", { class: "note" }, `외 ${list.length - 40}종목`));
       grid.append(box);
@@ -295,7 +296,7 @@ async function renderCalendar() {
       for (const r of rec) {
         const tr = h("tr", { class: "click", tabindex: 0 }, h("td", null, tkButton(r.t)), h("td", { class: "n" }, fmtD(r.lr, "md")),
           h("td", { class: "n " + cls(r.ls) }, fmtP(r.ls, 1)), h("td", { class: "n " + cls(r.lrx) }, isNum(r.lrx) ? fmtP(r.lrx, 1) : "–"),
-          h("td", { class: "n" }, fmtM((r.mc || 0) * 1000)));
+          h("td", { class: "n" }, fmtM((r.mc || 0) * 1000), kLine(krwM((r.mc || 0) * 1000))));
         tr.addEventListener("click", () => go("company", r.t));
         tb.append(tr);
       }

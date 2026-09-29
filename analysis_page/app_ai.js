@@ -29,6 +29,7 @@ function noteData(r, R) {
   const macro = DATA.macroSnap || null;
   return {
     as_of_close: DATA.dates[DATA.dates.length - 1], currency: "USD",
+    krw_per_usd: KRW.rate || null,
     units: r.fcur ? `재무제표·ttm 금액은 ${r.fcur} 백만 단위(1 ${r.fcur} = ${r.fx ?? "환율 미상"} USD), 시가총액·주가·주당 값은 USD` : "금액은 백만 달러(M), 주당 값은 달러",
     company: { ticker: r.t, name: p.n || r.n, korean_name: koName(r.t) || null, sector: p.sec || sectorKo(r.s), industry: p.ind || r.i,
       employees: p.emp, hq: p.loc, fiscal_year_end: p.fye, latest_quarter: p.mrq, description: (p.sum || "").slice(0, 1800) },
@@ -71,7 +72,8 @@ function notePrompt(r, R, focus) {
 - 목표주가처럼 추정이 필요한 곳은 쓰는 가정(예: 선행 EPS × 목표 PER)과 계산을 한 줄로 보여 주세요.
 - 특정 금융회사 명의나 로고를 쓰지 말고, 작성자는 "AI 애널리스트"로만 표시하세요.
 - 금액 단위는 [데이터]의 units 설명을 따르세요(보통 백만 달러). 본문에서는 $331.8B, $58.4M처럼 읽기 쉽게 바꿔 쓰고, 외화로 보고하는 회사는 통화를 밝히거나 달러로 환산해 쓰세요.
-- 형식: Markdown. 제목은 ##, 소제목은 ###. 표는 Markdown 표. 전체 분량은 한국어 3,000~4,500자.
+${KRW.rate ? `- 주가·목표주가·시가총액·매출·이익 같은 달러 금액 바로 뒤에는 괄호로 원화 환산액을 붙이세요. 환율은 [데이터]의 krw_per_usd(1달러 = ${fmtN(KRW.rate, 1)}원)를 쓰고, 예: $509.22(약 70.5만 원), $331.8B(약 450조 원)처럼 만·억·조 단위로 읽기 쉽게 반올림하세요.
+` : ""}- 형식: Markdown. 제목은 ##, 소제목은 ###. 표는 Markdown 표. 전체 분량은 한국어 3,000~4,500자.
 
 구성 (이 순서 그대로)
 ## ${r.t} 리서치 노트 — (한 줄 핵심 논지)

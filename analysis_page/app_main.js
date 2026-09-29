@@ -49,7 +49,7 @@ function wireSearch() {
       const r = row(t);
       const b = h("button", { type: "button", role: "option", "aria-selected": String(i === sel), id: "q-o" + i },
         h("span", { class: "sym" }, t), h("span", { class: "nm" }, dispName(t), koName(t) ? h("small", null, shortEn(r.n)) : null),
-        h("span", { class: "mc" }, isNum(r.mc) ? fmtM(r.mc * 1000) : r.q === "ETF" ? "ETF" : ""));
+        h("span", { class: "mc" }, isNum(r.mc) ? [fmtM(r.mc * 1000), kLine(krwM(r.mc * 1000))] : r.q === "ETF" ? "ETF" : ""));
       b.addEventListener("mousedown", (e) => { e.preventDefault(); pick(t); });
       res.append(b);
     });
@@ -70,6 +70,50 @@ function wireSearch() {
   });
 }
 
+// ---------------------------------------------------------------- won amounts (rate from the nightly collector)
+function krwTime(sec) {
+  if (!isNum(sec)) return "";
+  try {
+    const parts = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+      .formatToParts(new Date(sec * 1000));
+    const g = (t) => (parts.find((x) => x.type === t) || {}).value || "";
+    return `${g("month")}/${g("day")} ${g("hour")}:${g("minute")}`;
+  } catch (e) { return ""; }
+}
+/** redraw the current view in place (won amounts on/off) and keep the reader where they were */
+async function redrawInPlace() {
+  const y = window.scrollY;
+  hideTip();
+  if (APP.view === "company" && APP.sym) {
+    const oldAi = $("#s-ai .ai");                 // an AI note (maybe still being written) doesn't depend on the won setting
+    await renderCompany(APP.sym);
+    const nw = $("#s-ai .ai");
+    if (oldAi && nw) nw.replaceWith(oldAi);
+    const lv = APP.live.get(APP.sym), px = $("#co-px");
+    if (lv && px) fillPx(px, CO.row, lv);
+  } else {
+    (VIEWS[APP.view] || renderHome)();
+  }
+  requestAnimationFrame(() => window.scrollTo(0, y));
+}
+function initKrw() {
+  const btn = $("#krw-btn"), foot = $("#foot-fx");
+  KRW.rate = isNum(DATA.uni.krw) && DATA.uni.krw > 0 ? DATA.uni.krw : null;
+  KRW.at = DATA.uni.krw_at || null;
+  KRW.on = LS.get("krw", true) !== false;
+  if (!KRW.rate) { btn.hidden = true; foot.hidden = true; return; }
+  const t = krwTime(KRW.at);
+  foot.textContent = `원화 환산: 1달러 = ${fmtN(KRW.rate, 1)}원 (${t ? t + " 기준 " : ""}야후 파이낸스 환율, 매일 아침 갱신)`;
+  btn.title = `달러 금액 옆에 원화 환산액을 함께 보여 줘요 (1달러 = ${fmtN(KRW.rate, 1)}원)`;
+  btn.setAttribute("aria-pressed", String(KRW.on));
+  btn.addEventListener("click", () => {
+    KRW.on = !KRW.on;
+    LS.set("krw", KRW.on);
+    btn.setAttribute("aria-pressed", String(KRW.on));
+    redrawInPlace();
+  });
+}
+
 // ---------------------------------------------------------------- boot
 async function boot() {
   applyUpDown(LS.get("ud", "kr"));
@@ -84,6 +128,7 @@ async function boot() {
     clear($("#view")).append(h("div", { class: "err" }, "데이터를 불러오지 못했어요. 잠시 후 새로고침해 주세요. (" + e.message + ")"));
     return;
   }
+  initKrw();
   buildSearch();
   wireSearch();
   const n = DATA.rows.filter((r) => r.q === "EQUITY").length;
