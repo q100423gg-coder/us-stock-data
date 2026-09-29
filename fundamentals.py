@@ -47,6 +47,7 @@ BUDGET = int(os.environ.get("FUND_BUDGET_SEC", "1500"))       # fetch phase, sec
 THREADS = int(os.environ.get("FUND_THREADS", "3"))    # overlap latency; FUND_RPS sets the pace
 FRESH_H = float(os.environ.get("FUND_FRESH_HOURS", "18"))      # records younger than this are not refetched
 ONLY = [x.strip().upper() for x in os.environ.get("FUND_ONLY", "").split(",") if x.strip()]
+FORCE = {x.strip() for x in os.environ.get("FUND_FORCE", "").split(",") if x.strip()}   # parts to refresh for every ticker
 
 QS_URL = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
 TS_URL = "https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/"
@@ -233,29 +234,31 @@ def chart_monthly(sym):
     return res
 
 
-def news(sym, count=6):
-    import yfinance as yf
-    PACE.wait()
-    try:
-        items = yf.Ticker(sym).get_news(count=count) or []
-    except Exception as e:
-        if any(x in str(e) for x in ("429", "401", "403")) or "Rate" in type(e).__name__:
-            raise RateLimited(str(e))
-        return []
-    return parse_news(items)
+SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 
 
-def parse_news(items):
-    out = []
+def news(sym, keep=6):
+    """Latest headlines tagged with this ticker (Yahoo's search API: each item lists its related tickers)."""
+    j = get_json(SEARCH_URL, params={"q": sym, "quotesCount": 0, "newsCount": 16, "enableFuzzyQuery": "false",
+                                     "newsQueryId": "news_cie_vespa", "lang": "en-US", "region": "US"})
+    return parse_news(j.get("news") or [], sym, keep)
+
+
+def parse_news(items, sym, keep=6):
+    """-> [[UTC "YYYY-MM-DD HH:MM", title, publisher, url, type, tagged]] — items tagged with the ticker first"""
+    rows = []
     for it in items:
-        c = it.get("content") or it
-        title = c.get("title")
+        title = (it.get("title") or "").strip()
         if not title:
             continue
-        url = ((c.get("canonicalUrl") or {}).get("url") or (c.get("clickThroughUrl") or {}).get("url") or "")
-        out.append([(c.get("pubDate") or "")[:16].replace("T", " "), title.strip(),
-                    (c.get("provider") or {}).get("displayName") or "", url, c.get("contentType") or ""])
-    return out
+        ts = it.get("providerPublishTime")
+        when = datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d %H:%M") if ts else ""
+        rel = [str(x).upper() for x in (it.get("relatedTickers") or [])]
+        rows.append([when, title, it.get("publisher") or "", it.get("link") or "", it.get("type") or "", int(sym in rel)])
+    tagged = [r for r in rows if r[5]]
+    rest = [r for r in rows if not r[5]]
+    out = (tagged + rest)[:keep] if len(tagged) < 3 else tagged[:keep]
+    return sorted(out, key=lambda r: r[0], reverse=True)
 
 
 # ---------------------------------------------------------------- parse
@@ -279,6 +282,7 @@ def stmt_table(ts, prefix, mapping, keep):
 
 
 def merge_tables(*tables):
+    """Union of period columns; drops stray periods that carry only a couple of line items."""
     tables = [t for t in tables if t]
     if not tables:
         return None
@@ -290,7 +294,14 @@ def merge_tables(*tables):
             if k == "d":
                 continue
             out[k] = [vals[idx[d]] if d in idx else None for d in dates]
-    return out
+    keys = [k for k in out if k != "d"]
+    cnt = [sum(1 for k in keys if out[k][i] is not None) for i in range(len(dates))]
+    mx = max(cnt) if cnt else 0
+    keep = [i for i in range(len(dates)) if cnt[i] >= max(3, 0.3 * mx)]
+    if len(keep) < len(dates):
+        out = {k: [v[i] for i in keep] for k, v in out.items()}
+        out = {k: v for k, v in out.items() if k == "d" or any(x is not None for x in v)}
+    return out if out["d"] else None
 
 
 def parse_statements(ts_flow, ts_bal):
@@ -630,6 +641,7 @@ def due_order(universe, store, calendar):
             want.add("full")
         if a_news >= (FRESH_H if big else 72):
             want.add("news")
+        want |= FORCE & {"qs", "full", "news"}
         if not want:
             STATUS["skipped_fresh"] += 1
             continue
@@ -830,7 +842,7 @@ def screener_row(t, urow, rec, px, calendar):
         "om": rnd(k["om"] * 100, 1) if k.get("om") is not None else None,
         "pm": rnd(k["pm"] * 100, 1) if k.get("pm") is not None else None,
         "roe": rnd(k["roe"] * 100, 1) if k.get("roe") is not None else None,
-        "de": k.get("de"), "cr": k.get("cr"),
+        "de": k.get("de"), "cr": k.get("cr"), "pay": rnd(k["pay"] * 100, 1) if k.get("pay") is not None else None,
         "fcfy": rnd(fcf / mc_now * 100, 2) if (fcf is not None and mc_now) else None,
         "rm": k.get("rm"), "up": pct(tgt, close) if (tgt and close) else None, "na": k.get("na"),
         "nx": nx, "beta": k.get("beta"), "si": rnd(k["si"] * 100, 2) if k.get("si") is not None else None,
