@@ -30,12 +30,13 @@ jobs:
           python-version: "3.12"
 
       - name: Fetch FRED series and the Nasdaq earnings calendar
-        run: python macro.py
+        run: timeout 720 python macro.py
 
-      - name: Publish release assets
+      - name: Publish release assets (whatever was fetched, plus a status file)
+        if: always()
         run: |
           gh release view data >/dev/null 2>&1 || gh release create data --title "Daily US prices" --notes "Updated by the nightly workflows. Download: releases/download/data/<file>"
-          for f in out/macro.json out/earnings_calendar.json; do
+          for f in out/macro.json out/earnings_calendar.json out/macro_status.json; do
             if [ -s "$f" ]; then gh release upload data "$f" --clobber; fi
           done
         env:

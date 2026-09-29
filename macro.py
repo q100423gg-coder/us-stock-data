@@ -13,6 +13,7 @@ a failure leaves that series or the calendar out instead of failing the run.
 import csv
 import io
 import json
+import signal
 import sys
 import time
 import urllib.request
@@ -58,7 +59,10 @@ GROUPS = [("rates", "금리"), ("inflation", "물가"), ("labor", "고용"), ("g
           ("liquidity", "유동성·신용"), ("market", "시장")]
 
 
-def get(url, headers=None, tries=3, timeout=40):
+STATUS = {"fred": {}, "nasdaq": {}}    # written to out/macro_status.json: what worked, how long it took
+
+
+def get(url, headers=None, tries=2, timeout=20):
     last = None
     for i in range(tries):
         try:
@@ -67,12 +71,13 @@ def get(url, headers=None, tries=3, timeout=40):
                 return r.read().decode("utf-8", "replace")
         except Exception as e:  # network hiccups: back off and retry
             last = e
-            time.sleep(2 * (i + 1))
+            if i + 1 < tries:
+                time.sleep(2 * (i + 1))
     raise last
 
 
 def fred(sid):
-    text = get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}&cosd={START}")
+    text = get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}&cosd={START}", timeout=25)
     rows = list(csv.reader(io.StringIO(text)))
     obs = []
     for r in rows[1:]:
@@ -118,42 +123,59 @@ def thin_daily(obs):
     return sorted(weekly.values()) + new
 
 
+def fetch_one(spec):
+    sid = spec[0]
+    t0 = time.time()
+    try:
+        obs = fred(sid)
+        STATUS["fred"][sid] = {"ok": bool(obs), "n": len(obs), "sec": round(time.time() - t0, 1)}
+        return spec, obs, None
+    except Exception as e:
+        STATUS["fred"][sid] = {"ok": False, "sec": round(time.time() - t0, 1), "err": f"{type(e).__name__}: {e}"[:200]}
+        return spec, None, e
+
+
 def macro():
+    from concurrent.futures import ThreadPoolExecutor
     series, failed = {}, []
-    for sid, key, name, unit, group, how, freq, desc in SERIES:
-        try:
-            obs = transform(fred(sid), how)
-        except Exception as e:
-            failed.append(f"{sid}: {type(e).__name__}")
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(fetch_one, SERIES))
+    for (sid, key, name, unit, group, how, freq, desc), raw, err in results:
+        if err is not None or not raw:
+            failed.append(f"{sid}: {type(err).__name__ if err else 'empty'}")
             continue
-        if not obs:
-            failed.append(f"{sid}: empty")
-            continue
+        obs = transform(raw, how)
         if freq == "D":
             obs = thin_daily(obs)
         nd = 3 if unit in ("조 달러",) or key == "NFCI" else 2
         series[key] = dict(id=sid, name=name, unit=unit, group=group, freq=freq, desc=desc,
                            obs=[[d, round(v, nd)] for d, v in obs])
-        time.sleep(0.3)
     return dict(updated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 groups=[dict(id=g, name=n) for g, n in GROUPS], series=series, failed=failed)
 
 
-def earnings_calendar(days=80):
-    """Next report date per ticker from Nasdaq's public earnings calendar."""
+def earnings_calendar(days=80, budget=300):
+    """Next report date per ticker from Nasdaq's public earnings calendar (at most `budget` seconds)."""
     headers = {"Accept": "application/json, text/plain, */*", "Origin": "https://www.nasdaq.com",
-               "Referer": "https://www.nasdaq.com/"}
+               "Referer": "https://www.nasdaq.com/", "Accept-Language": "en-US,en;q=0.9"}
     today = datetime.now(ZoneInfo("America/New_York")).date()
-    out, bad = {}, 0
+    out, bad, good, t0 = {}, 0, 0, time.time()
     for i in range(days):
         d = today + timedelta(days=i)
         if d.weekday() > 4:
             continue
+        if time.time() - t0 > budget:
+            STATUS["nasdaq"]["stopped"] = "time budget"
+            break
         try:
-            j = json.loads(get(f"https://api.nasdaq.com/api/calendar/earnings?date={d.isoformat()}", headers, tries=2))
-        except Exception:
+            j = json.loads(get(f"https://api.nasdaq.com/api/calendar/earnings?date={d.isoformat()}", headers,
+                               tries=1, timeout=15))
+            good += 1
+        except Exception as e:
             bad += 1
-            if bad >= 5 and not out:           # blocked from this runner: give up quietly
+            STATUS["nasdaq"]["last_err"] = f"{type(e).__name__}: {e}"[:200]
+            if bad >= 3 and not good:           # blocked from this runner: give up quietly
+                STATUS["nasdaq"]["stopped"] = "blocked"
                 break
             continue
         for r in ((j or {}).get("data") or {}).get("rows") or []:
@@ -165,19 +187,31 @@ def earnings_calendar(days=80):
                         "eps": r.get("epsForecast") or None, "q": r.get("fiscalQuarterEnding") or None,
                         "n": r.get("noOfEsts") or None}
         time.sleep(0.4)
+    STATUS["nasdaq"].update(days_ok=good, days_bad=bad, tickers=len(out), sec=round(time.time() - t0, 1))
     return out
 
 
 def main():
     OUT.mkdir(exist_ok=True)
-    m = macro()
-    (OUT / "macro.json").write_text(json.dumps(m, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    print(f"macro: {len(m['series'])} series, failed: {m['failed']}")
-    cal = earnings_calendar()
-    if cal:
-        payload = dict(updated_at=m["updated_at"], tickers=cal)
-        (OUT / "earnings_calendar.json").write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-    print(f"earnings calendar: {len(cal)} tickers")
+    # `timeout` sends SIGTERM: turn it into SystemExit so the status file below still gets written
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit("killed by timeout"))
+    t0 = time.time()
+    m = {"series": {}}
+    try:
+        m = macro()
+        STATUS["fred_sec"] = round(time.time() - t0, 1)
+        if m["series"]:
+            (OUT / "macro.json").write_text(json.dumps(m, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        print(f"macro: {len(m['series'])} series, failed: {m['failed']}", flush=True)
+        cal = earnings_calendar()
+        if cal:
+            payload = dict(updated_at=m["updated_at"], tickers=cal)
+            (OUT / "earnings_calendar.json").write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        print(f"earnings calendar: {len(cal)} tickers", flush=True)
+    finally:
+        STATUS["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        STATUS["total_sec"] = round(time.time() - t0, 1)
+        (OUT / "macro_status.json").write_text(json.dumps(STATUS, indent=1), encoding="utf-8")
     if len(m["series"]) < len(SERIES) // 2:
         sys.exit("too many FRED series failed")
 
