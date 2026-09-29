@@ -44,7 +44,7 @@ OUT = HERE / "out"
 STORE = "fund_store.json.gz"
 NSHARDS = 64
 BUDGET = int(os.environ.get("FUND_BUDGET_SEC", "1500"))       # fetch phase, seconds
-THREADS = int(os.environ.get("FUND_THREADS", "3"))
+THREADS = int(os.environ.get("FUND_THREADS", "3"))    # overlap latency; FUND_RPS sets the pace
 FRESH_H = float(os.environ.get("FUND_FRESH_HOURS", "18"))      # records younger than this are not refetched
 ONLY = [x.strip().upper() for x in os.environ.get("FUND_ONLY", "").split(",") if x.strip()]
 
@@ -133,7 +133,27 @@ def mil(x):
 # ---------------------------------------------------------------- network
 
 class RateLimited(Exception):
-    pass
+    """Yahoo refused the request (429, or 401/403 once the crumb is burned): pause, reset, retry later."""
+
+
+class Pacer:
+    """Global request pacing shared by all worker threads."""
+
+    def __init__(self, rps):
+        self.gap = 1.0 / max(0.1, rps)
+        self.next = 0.0
+        self.lock = threading.Lock()
+
+    def wait(self):
+        with self.lock:
+            now = time.time()
+            t = max(now, self.next)
+            self.next = t + self.gap * random.uniform(0.8, 1.25)
+        if t > now:
+            time.sleep(t - now)
+
+
+PACE = Pacer(float(os.environ.get("FUND_RPS", "5")))
 
 
 def yf_data():
@@ -141,14 +161,35 @@ def yf_data():
     return YfData()
 
 
+def disable_cookie_cache():
+    """Never reuse a cookie persisted by an earlier run: a burned cookie would survive session resets."""
+    try:
+        from yfinance import cache as yfc
+        yfc._CookieCacheManager._Cookie_cache = yfc._CookieCacheDummy()
+    except Exception as e:
+        print(f"could not disable yfinance cookie cache: {e}", flush=True)
+
+
+def reset_session():
+    """Fresh HTTP session, cookie and crumb (after Yahoo starts answering 401/403/429)."""
+    from yfinance.data import YfData
+    from yfinance._http import new_session
+    d = YfData(session=new_session())
+    with d._cookie_lock:
+        d._cookie = None
+        d._crumb = None
+        d._cookie_strategy = "basic"
+
+
 def get_json(url, params=None, timeout=30):
     from yfinance.exceptions import YFRateLimitError
+    PACE.wait()
     try:
         r = yf_data().get(url, params=params, timeout=timeout)
     except YFRateLimitError as e:
         raise RateLimited(str(e))
-    if r.status_code == 429:
-        raise RateLimited("HTTP 429")
+    if r.status_code in (401, 403, 429):
+        raise RateLimited(f"HTTP {r.status_code}")
     if r.status_code >= 400:
         raise RuntimeError(f"HTTP {r.status_code} for {url.split('?')[0]}")
     return r.json()
@@ -194,10 +235,11 @@ def chart_monthly(sym):
 
 def news(sym, count=6):
     import yfinance as yf
+    PACE.wait()
     try:
         items = yf.Ticker(sym).get_news(count=count) or []
     except Exception as e:
-        if "429" in str(e) or "Rate" in type(e).__name__:
+        if any(x in str(e) for x in ("429", "401", "403")) or "Rate" in type(e).__name__:
             raise RateLimited(str(e))
         return []
     return parse_news(items)
@@ -461,43 +503,64 @@ def parse_etf(sym, qs):
     return rec
 
 
-def fetch_record(sym, is_etf):
-    rec = {"t": sym, "at": now_utc().strftime("%Y-%m-%dT%H:%M:%SZ"), "q": "ETF" if is_etf else "EQUITY"}
-    if is_etf:
-        try:
-            qs = quote_summary(sym, ETF_MODULES)
-        except RateLimited:
-            raise
-        except Exception:
-            qs = quote_summary(sym, [m for m in ETF_MODULES if m != "topHoldings"])
-        rec.update(parse_etf(sym, qs))
-    else:
-        qs = quote_summary(sym, MODULES)
-        rec.update(parse_equity(sym, qs))
-        ts_flow = timeseries(sym, [("annual", list(INC.values()) + list(CF.values())),
-                                   ("quarterly", list(INC.values()) + list(CF.values())),
-                                   ("trailing", list(INC.values()) + list(CF.values()))])
-        ts_bal = timeseries(sym, [("annual", list(BAL.values())), ("quarterly", list(BAL.values())),
-                                  ("monthly", list(VAL.values())), ("trailing", list(VAL.values()))])
-        fs, teps = parse_statements(ts_flow, ts_bal)
-        rec["fs"] = fs
-        if teps:
-            rec["teps"] = teps
-        vm, vcur = parse_valuation(ts_bal)
-        if vm:
-            rec["vm"] = vm
-        if vcur:
-            rec["vc"] = vcur
-    pm, divs, spl = parse_chart(chart_monthly(sym))
-    if pm:
-        rec["pm"] = {"s": pm["s"], "c": pm["c"]}
-    if divs:
-        rec["dv"] = divs
-    if spl:
-        rec["sp"] = spl
-    nw = news(sym)
-    if nw:
-        rec["nw"] = nw
+QS_KEYS = ("p", "k", "e", "rt", "ud", "own", "itx", "ih", "nspa", "etf")
+FULL_KEYS = ("fs", "teps", "vm", "vc", "pm", "dv", "sp")
+
+
+def stamp():
+    return now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fetch_record(sym, is_etf, old, want):
+    """Refresh the parts of one record that are due. want: subset of {"qs", "full", "news"}."""
+    rec = dict(old or {})
+    rec["t"], rec["q"] = sym, "ETF" if is_etf else "EQUITY"
+    if "qs" in want:
+        if is_etf:
+            try:
+                qs = quote_summary(sym, ETF_MODULES)
+            except RateLimited:
+                raise
+            except Exception:
+                qs = quote_summary(sym, [m for m in ETF_MODULES if m != "topHoldings"])
+            part = parse_etf(sym, qs)
+        else:
+            part = parse_equity(sym, quote_summary(sym, MODULES))
+        for k in QS_KEYS:
+            rec.pop(k, None)
+        rec.update(part)
+        rec["at_qs"] = stamp()
+    if "full" in want:
+        part = {}
+        if not is_etf:
+            flow = list(INC.values()) + list(CF.values())
+            ts_flow = timeseries(sym, [("annual", flow), ("quarterly", flow), ("trailing", flow)])
+            ts_bal = timeseries(sym, [("annual", list(BAL.values())), ("quarterly", list(BAL.values())),
+                                      ("monthly", list(VAL.values())), ("trailing", list(VAL.values()))])
+            fs, teps = parse_statements(ts_flow, ts_bal)
+            part["fs"] = fs
+            if teps:
+                part["teps"] = teps
+            vm, vcur = parse_valuation(ts_bal)
+            if vm:
+                part["vm"] = vm
+            if vcur:
+                part["vc"] = vcur
+        pm, divs, spl = parse_chart(chart_monthly(sym))
+        if pm:
+            part["pm"] = {"s": pm["s"], "c": pm["c"]}
+        if divs:
+            part["dv"] = divs
+        if spl:
+            part["sp"] = spl
+        for k in FULL_KEYS:
+            rec.pop(k, None)
+        rec.update(part)
+        rec["at_full"] = stamp()
+    if "news" in want:
+        rec["nw"] = news(sym)
+        rec["at_news"] = stamp()
+    rec["at"] = max(x for x in (rec.get("at_qs"), rec.get("at_full"), rec.get("at_news")) if x)
     return rec
 
 
@@ -515,7 +578,11 @@ def load_store():
     if p.exists():
         try:
             with gzip.open(p, "rt", encoding="utf-8") as f:
-                return json.load(f)
+                store = json.load(f)
+            for rec in store.get("tickers", {}).values():       # records from before the refresh tiers
+                if rec.get("at") and not rec.get("at_qs"):
+                    rec["at_qs"] = rec["at_full"] = rec["at_news"] = rec["at"]
+            return store
         except Exception as e:
             print(f"store unreadable ({e}); starting fresh", flush=True)
     return {"v": 1, "tickers": {}}
@@ -529,7 +596,17 @@ def save_store(store):
     tmp.replace(OUT / STORE)
 
 
+FULL_DAYS = float(os.environ.get("FUND_FULL_DAYS", "6"))       # statements / chart refresh cadence
+
+
+def age_h(ts, now):
+    if not ts:
+        return 1e9
+    return (now - datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)).total_seconds() / 3600
+
+
 def due_order(universe, store, calendar):
+    """[(sym, want)] in priority order: missing records, post-earnings refreshes, then stalest quotes."""
     now = now_utc()
     today = now.date()
     items = []
@@ -538,41 +615,70 @@ def due_order(universe, store, calendar):
         if ONLY and t not in ONLY:
             continue
         rec = store["tickers"].get(t)
-        if rec is None or not rec.get("at"):
-            items.append((0, 0.0, t))
+        if ONLY or rec is None or not rec.get("at_qs"):
+            items.append((0, -1e9, t, {"qs", "full", "news"}))
             continue
-        at = datetime.strptime(rec["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        age_h = (now - at).total_seconds() / 3600
-        nx = ((rec.get("e") or {}).get("nx") or {}).get("d") or (calendar.get(t) or {}).get("d")
-        reported = bool(nx) and at.date() <= date.fromisoformat(nx) < today
-        if ONLY:
-            items.append((0, -age_h, t))
-        elif reported:
-            items.append((1, -age_h, t))
-        elif age_h >= FRESH_H:
-            items.append((2, -age_h, t))
-        else:
+        a_qs, a_full, a_news = age_h(rec.get("at_qs"), now), age_h(rec.get("at_full"), now), age_h(rec.get("at_news"), now)
+        nx = (calendar.get(t) or {}).get("d") or ((rec.get("e") or {}).get("nx") or {}).get("d")
+        full_at = rec.get("at_full")
+        reported = bool(nx and full_at) and full_at[:10] <= nx < today.isoformat()
+        big = (float(r.get("market_cap") or 0) >= 2e10) or str(r.get("sp500")) == "1"
+        want = set()
+        if a_qs >= FRESH_H or reported:
+            want.add("qs")
+        if reported or a_full >= FULL_DAYS * 24:
+            want.add("full")
+        if a_news >= (FRESH_H if big else 72):
+            want.add("news")
+        if not want:
             STATUS["skipped_fresh"] += 1
-    items.sort()
-    return [t for _, _, t in items]
+            continue
+        items.append((1 if reported else 2, -max(a_qs, a_full / 24), t, want))
+    items.sort(key=lambda x: (x[0], x[1], x[2]))
+    return [(t, w) for _, _, t, w in items]
 
 
 def phase_fetch(universe, store, calendar):
     etfs = {r["ticker"] for r in universe if str(r.get("etf")) == "1"}
     order = due_order(universe, store, calendar)
-    print(f"fetch: {len(order)} due of {len(universe)}; budget {BUDGET}s, {THREADS} threads", flush=True)
+    n_full = sum(1 for _, w in order if "full" in w)
+    print(f"fetch: {len(order)} due of {len(universe)} ({n_full} full); budget {BUDGET}s, {THREADS} threads, "
+          f"{1 / PACE.gap:.1f} req/s", flush=True)
+    disable_cookie_cache()
     t0 = time.time()
     pause_until = [0.0]
     strikes = [0]
     stop = threading.Event()
     it = iter(order)
 
+    def blocked(sym, e):
+        """Yahoo pushed back: pause everyone, start a fresh session, give up after repeated strikes."""
+        with LOCK:
+            STATUS["rate_limited"] += 1
+            strikes[0] += 1
+            k = strikes[0]
+            pause = min(600, 30 * 2 ** (k - 1))
+            if pause_until[0] < time.time() + pause:
+                pause_until[0] = time.time() + pause
+            if k >= 6:
+                STATUS["stopped"] = "blocked by Yahoo"
+                stop.set()
+        print(f"  blocked at {sym} ({e}); pause {pause}s, new session (strike {k})", flush=True)
+        if stop.is_set():
+            return
+        time.sleep(max(0, pause_until[0] - time.time()))
+        try:
+            reset_session()
+        except Exception as ex:
+            print(f"  session reset failed: {ex}", flush=True)
+
     def worker():
         while not stop.is_set():
             with LOCK:
-                sym = next(it, None)
-            if sym is None:
+                nxt = next(it, None)
+            if nxt is None:
                 return
+            sym, want = nxt
             if time.time() - t0 > BUDGET:
                 STATUS["stopped"] = "time budget"
                 stop.set()
@@ -580,9 +686,11 @@ def phase_fetch(universe, store, calendar):
             wait = pause_until[0] - time.time()
             if wait > 0:
                 time.sleep(wait)
-            for attempt in range(2):
+            for attempt in range(3):
+                if stop.is_set():
+                    return
                 try:
-                    rec = fetch_record(sym, sym in etfs)
+                    rec = fetch_record(sym, sym in etfs, store["tickers"].get(sym), want)
                     with LOCK:
                         store["tickers"][sym] = rec
                         STATUS["fetched"] += 1
@@ -592,30 +700,20 @@ def phase_fetch(universe, store, calendar):
                         print(f"  {n} fetched, {time.time() - t0:.0f}s", flush=True)
                     break
                 except RateLimited as e:
-                    with LOCK:
-                        STATUS["rate_limited"] += 1
-                        strikes[0] += 1
-                        pause_until[0] = time.time() + 60 * strikes[0]
-                        if strikes[0] >= 5:
-                            STATUS["stopped"] = "rate limited"
-                            stop.set()
-                    print(f"  rate limited at {sym} ({e}); pausing {60 * strikes[0]}s", flush=True)
-                    if stop.is_set():
-                        return
-                    time.sleep(max(0, pause_until[0] - time.time()))
+                    blocked(sym, e)
                 except Exception as e:
                     with LOCK:
                         STATUS["failed"] += 1
                         if len(STATUS["errors"]) < 60:
                             STATUS["errors"].append(f"{sym}: {type(e).__name__}: {e}"[:220])
                     break
-            time.sleep(random.uniform(0.05, 0.25))
 
     with ThreadPoolExecutor(max_workers=THREADS) as pool:
         for _ in range(THREADS):
             pool.submit(worker)
     STATUS["fetch_sec"] = round(time.time() - t0, 1)
-    print(f"fetch done: {STATUS['fetched']} ok, {STATUS['failed']} failed, {STATUS['rate_limited']} rate-limit hits, "
+    STATUS["due"] = len(order)
+    print(f"fetch done: {STATUS['fetched']} ok, {STATUS['failed']} failed, {STATUS['rate_limited']} blocks, "
           f"{STATUS['fetch_sec']}s, stopped={STATUS['stopped']}", flush=True)
 
 
@@ -709,6 +807,7 @@ def screener_row(t, urow, rec, px, calendar):
     tgt = (k.get("tgt") or [None])[0]
     nx = (calendar.get(t) or {}).get("d") or (e.get("nx") or {}).get("d")
     sec = p.get("sec") or NASDAQ_SECTOR.get(urow.get("sector") or "")
+    last_rep = (e.get("h") or [None])[-1]
     ch = pct(cls[-1], cls[-2]) if len(cls) >= 2 else None
     hi = max(cls[-252:]) if cls else None
     row = {
@@ -735,6 +834,7 @@ def screener_row(t, urow, rec, px, calendar):
         "fcfy": rnd(fcf / mc_now * 100, 2) if (fcf is not None and mc_now) else None,
         "rm": k.get("rm"), "up": pct(tgt, close) if (tgt and close) else None, "na": k.get("na"),
         "nx": nx, "beta": k.get("beta"), "si": rnd(k["si"] * 100, 2) if k.get("si") is not None else None,
+        "lr": last_rep[6] if last_rep else None, "ls": last_rep[5] if last_rep else None,
         "at": (rec or {}).get("at", "")[:10] or None,
     }
     if dts:
