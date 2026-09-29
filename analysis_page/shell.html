@@ -406,14 +406,65 @@ table.st{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
 .tb.amc{background:var(--surface-3);color:var(--ink)}
 
 /* ---------- macro */
-.regime{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
-.rg{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;background:var(--surface-2);font-size:13px;line-height:1.55}
-.rg i{width:9px;height:9px;border-radius:50%;flex:none;margin-top:6px;background:var(--ink-3)}
-.rg.ok i{background:var(--s3)} .rg.warn i{background:var(--warn-dot)} .rg.bad i{background:var(--down)}
-.rg b{display:block;font-weight:600}
-.rg span{color:var(--ink-2)}
-.mgroup{display:flex;flex-direction:column;gap:10px}
+/* status for stocks: follows the up/down colour setting like the 추세 레이더 verdicts; always paired with words */
+.mst{display:inline-flex;align-items:center;gap:5px;padding:1px 8px 1px 6px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface);font-size:11.5px;font-weight:600;color:var(--ink);white-space:nowrap;line-height:1.6;font-family:var(--sans)}
+.mst i{width:7px;height:7px;border-radius:50%;background:var(--s0);flex:none}
+.mst.good{border-color:var(--up);background:var(--up-soft)} .mst.good i{background:var(--up)}
+.mst.warn{border-color:var(--warn-dot);background:var(--warn-soft)} .mst.warn i{background:var(--warn-dot)}
+.mst.bad{border-color:var(--down);background:var(--down-soft)} .mst.bad i{background:var(--down)}
+.mst-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+.mst-row .lvtag{font-size:11.5px;color:var(--ink-2)}
+.msay{margin:0;font-size:12.5px;line-height:1.6;color:var(--ink-2)}
+.mnow{gap:14px}
+.mnow-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
+.mpill{display:inline-flex;align-items:center;gap:8px;padding:5px 14px 5px 11px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface-2);font-weight:700;font-size:15px;white-space:nowrap}
+.mpill i{width:9px;height:9px;border-radius:50%;background:var(--s0)}
+.mpill.good{border-color:var(--up)} .mpill.good i{background:var(--up)}
+.mpill.warn{border-color:var(--warn-dot)} .mpill.warn i{background:var(--warn-dot)}
+.mpill.bad{border-color:var(--down)} .mpill.bad i{background:var(--down)}
+.mnow-sum{margin:0;font-size:14px;line-height:1.65;color:var(--ink);flex:1 1 320px;min-width:0}
+.mthemes{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:8px}
+.mth{display:flex;flex-direction:column;gap:5px;text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);cursor:pointer;min-width:0}
+.mth:hover{border-color:var(--ink-3)}
+.mth-h{display:flex;align-items:center;gap:8px}
+.mth-h b{font-size:13.5px;font-weight:700}
+.mth .tx{font-size:12.5px;line-height:1.6;color:var(--ink-2)}
+.mrec{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:12px}
+.mrec h3{margin:0;font-size:13.5px;font-weight:700;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.mrec h3 span{font-size:12px;font-weight:500;color:var(--ink-3)}
+.mck{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:8px 18px}
+.mck li{display:grid;grid-template-columns:16px minmax(0,1fr);gap:1px 8px;align-items:baseline;font-size:13px}
+.mck .mk{font-family:var(--mono);font-weight:700;text-align:center;color:var(--ink-2)}
+.mck li.on .mk{color:var(--down)}
+.mck li b{font-weight:600} .mck li.off b{color:var(--ink-3);font-weight:500} .mck li.on b{color:var(--down)}
+.mck small{grid-column:2;font-size:12px;color:var(--ink-3);line-height:1.5}
+.mgroup{display:flex;flex-direction:column;gap:10px;scroll-margin-top:12px}
 .mgroup h3{margin:0;font-size:14px;font-weight:700}
+.mg-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.mg-intro{margin:0;font-size:12.5px;line-height:1.6;color:var(--ink-2);max-width:90ch}
+.mgauge{position:relative;padding-bottom:13px;margin-top:4px}
+.mgauge .bar{position:relative;height:6px;border-radius:3px;background:var(--surface-3)}
+.mgauge .z{position:absolute;top:0;bottom:0;background:var(--surface-3);box-shadow:inset -1px 0 0 var(--surface)}
+.mgauge .z.on.good{background:var(--up)} .mgauge .z.on.mid{background:var(--s0)} .mgauge .z.on.warn{background:var(--warn-dot)} .mgauge .z.on.bad{background:var(--down)}
+.mgauge .z:first-child{border-radius:3px 0 0 3px} .mgauge .z:last-of-type{border-radius:0 3px 3px 0}
+.mgauge .mk{position:absolute;top:-4px;width:4px;height:14px;margin-left:-2px;border-radius:2px;background:var(--ink);box-shadow:0 0 0 2px var(--surface)}
+.mgauge .tk{position:absolute;left:0;right:0;top:10px;height:12px}
+.mgauge .tk span{position:absolute;transform:translateX(-50%);font:10px/1.2 var(--mono);color:var(--ink-3);white-space:nowrap}
+.mguide{display:grid;grid-template-columns:88px minmax(0,1fr);gap:7px 14px;margin:0;font-size:13px;line-height:1.65}
+.mguide dt{font-weight:600;color:var(--ink)}
+.mguide dd{margin:0;color:var(--ink-2)}
+.mguide dd .mst{margin-right:4px;vertical-align:1px}
+@media (max-width:560px){.mguide{grid-template-columns:minmax(0,1fr);gap:2px}.mguide dd{margin-bottom:8px}}
+.mgloss{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:0 18px}
+.mgloss summary{cursor:pointer;padding:14px 0;font-weight:700;font-size:15px}
+.mgloss .intro{margin:0 0 12px;color:var(--ink-2);font-size:13px;max-width:80ch}
+.mgl{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:18px 30px;padding-bottom:18px}
+.mgl h3{font-size:12.5px;margin:0 0 8px;color:var(--ink-2);letter-spacing:.02em}
+.mgl dl{margin:0;display:flex;flex-direction:column;gap:10px}
+.mgl dt{font-weight:600;font-size:13px}
+.mgl dd{margin:2px 0 0;font-size:12.5px;color:var(--ink-2);line-height:1.65}
+.mgl dd b{color:var(--ink);font-weight:600}
+.mcard .mst-row{margin-top:2px}
 .mcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
 .mc2{display:flex;flex-direction:column;gap:6px;text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:12px 14px;cursor:pointer;min-width:0}
 .mc2:hover{border-color:var(--ink-3)}

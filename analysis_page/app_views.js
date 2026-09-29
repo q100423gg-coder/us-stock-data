@@ -1,5 +1,5 @@
 /* =====================================================================
-   기업 분석 노트 — home, screener, earnings calendar, macro
+   기업 분석 노트 — home, screener, earnings calendar (macro: app_macro.js)
    ===================================================================== */
 const POPULAR = ["NVDA", "AAPL", "MSFT", "TSLA", "GOOGL", "AMZN", "META", "AVGO", "PLTR", "SPCX", "TSM", "INOD"];
 function tkButton(t, extra) {
@@ -76,10 +76,12 @@ async function renderHome() {
   }).catch(() => { clear(elist).append(h("p", { class: "note" }, "실적 일정을 불러오지 못했어요.")); });
   loadMacro().then((m) => {
     clear(strip);
+    const rd = macroRead(m);
+    strip.before(macroVerdict(rd));
     for (const key of ["FFR", "UST10Y", "SP10_3M", "CPI", "CORE_PCE", "UNRATE", "VIX", "HY"]) {
       const s = m.series[key];
       if (!s) continue;
-      strip.append(macroMini(key, s));
+      strip.append(macroMini(key, s, rd.items[key]));
     }
   }).catch(() => { clear(strip).append(h("p", { class: "note" }, "매크로 데이터를 불러오지 못했어요.")); });
 }
@@ -94,41 +96,6 @@ function watchCard(t) {
       r.nx && r.nx >= todayISO() ? h("span", null, "실적 " + fmtD(r.nx, "md")) : null));
   return b;
 }
-function macroChange(s) {
-  const obs = s.obs;
-  if (!obs || obs.length < 2) return {};
-  const last = obs[obs.length - 1];
-  const find = (days) => { const t = pd(last[0]).getTime() - days * DAYMS; let v = null; for (const o of obs) { if (pd(o[0]).getTime() <= t) v = o; else break; } return v; };
-  const m1 = find(s.freq === "M" ? 31 : s.freq === "Q" ? 92 : 30), y1 = find(365);
-  const pctUnit = /%|pt/.test(s.unit) && !/전년비|연율/.test(s.unit) ? false : false;
-  return { last, m1, y1, pctUnit };
-}
-function macroFmt(s, v) {
-  if (!isNum(v)) return "–";
-  if (s.unit === "천 명" || s.unit === "천 건" || s.unit === "천 호(연율)") return fmtN(v, 0);
-  if (s.unit === "pt" && v > 1000) return fmtN(v, 0);
-  if (s.unit === "조 달러") return fmtN(v, 2);
-  if (s.unit === "지수") return fmtN(v, v > 50 ? 1 : 3);
-  if (s.unit === "달러/배럴") return fmtN(v, 1);
-  return fmtN(v, 2);
-}
-function macroDelta(s, a, b) {
-  if (!a || !b || !isNum(a[1]) || !isNum(b[1])) return null;
-  if (s.unit === "천 명") { const d = a[1] - b[1]; return (d > 0 ? "+" : d < 0 ? "−" : "") + fmtN(Math.abs(d), 0) + "천 명"; }
-  const isRate = /%/.test(s.unit) || s.unit === "%p";
-  if (isRate) { const d = a[1] - b[1]; return (d > 0 ? "+" : d < 0 ? "−" : "") + fmtN(Math.abs(d), 2) + "%p"; }
-  return fmtP((a[1] / b[1] - 1) * 100, 1);
-}
-function macroMini(key, s) {
-  const c = macroChange(s);
-  const recent = s.obs.slice(-Math.min(s.obs.length, s.freq === "D" ? 504 : s.freq === "W" ? 104 : s.freq === "Q" ? 12 : 36)).map((o) => o[1]);
-  return h("button", { type: "button", class: "mcard", onclick: () => { MAC.open = key; go("macro"); } },
-    h("span", { class: "nm" }, s.name),
-    h("span", { class: "v" }, macroFmt(s, c.last && c.last[1]), h("small", null, s.unit)),
-    spark(recent, "var(--s1)", 150, 30),
-    h("span", { class: "d" }, (c.last ? fmtD(c.last[0], s.freq === "M" || s.freq === "Q" ? "ym" : "md") : "") + (macroDelta(s, c.last, c.y1) ? " · 1년 " + macroDelta(s, c.last, c.y1) : "")));
-}
-
 // ---------------------------------------------------------------- screener
 const PRESETS = [
   { id: "all", name: "전체", desc: "모든 종목", fn: () => true },
@@ -306,147 +273,4 @@ async function renderCalendar() {
     }
   }
   draw();
-}
-
-// ---------------------------------------------------------------- macro
-const MAC = { open: null, range: "5Y" };
-function regimeTiles(m) {
-  const S = m.series, out = [];
-  const L = (k) => { const s = S[k]; return s && s.obs.length ? s.obs[s.obs.length - 1] : null; };
-  const ago = (k, days) => { const s = S[k]; if (!s) return null; const last = s.obs[s.obs.length - 1]; const t = pd(last[0]).getTime() - days * DAYMS; let v = null; for (const o of s.obs) { if (pd(o[0]).getTime() <= t) v = o; else break; } return v; };
-  const ffr = L("FFR"), ffr1 = ago("FFR", 365);
-  if (ffr) {
-    const d = ffr1 ? ffr[1] - ffr1[1] : 0;
-    out.push({ lv: "ok", t: `기준금리 ${fmtN(ffr[1], 2)}%`, s: d < -0.1 ? `1년 새 ${fmtN(-d, 2)}%p 인하 — 완화 국면이에요.` : d > 0.1 ? `1년 새 ${fmtN(d, 2)}%p 인상 — 긴축 국면이에요.` : "1년째 동결이에요." });
-    if (d > 0.1) out[out.length - 1].lv = "warn";
-  }
-  const c3 = L("SP10_3M"), c2 = L("SP10_2");
-  if (c3) out.push({ lv: c3[1] < 0 ? "bad" : c3[1] < 0.3 ? "warn" : "ok", t: `장단기 금리차 ${fmtN(c3[1], 2)}%p (10년−3개월)`, s: c3[1] < 0 ? "역전 상태 — 과거엔 경기 침체의 선행 신호였어요." : c3[1] < 0.3 ? "거의 평평해요." : "정상 기울기예요." + (c2 ? ` 10년−2년은 ${fmtN(c2[1], 2)}%p.` : "") });
-  const cpi = L("CPI"), core = L("CORE_PCE"), cpi3 = ago("CPI", 92);
-  if (cpi) out.push({ lv: cpi[1] > 3.5 ? "bad" : cpi[1] > 2.6 ? "warn" : "ok", t: `소비자물가 ${fmtN(cpi[1], 1)}% (전년비)`,
-    s: (cpi3 ? (cpi[1] < cpi3[1] - 0.1 ? "3개월 전보다 둔화" : cpi[1] > cpi3[1] + 0.1 ? "3개월 전보다 가속" : "3개월 전과 비슷") : "") + (core ? ` · 근원 PCE ${fmtN(core[1], 1)}% (연준 목표 2%)` : "") });
-  const un = L("UNRATE"), sahm = L("SAHM"), nfp = L("NFP");
-  if (un) out.push({ lv: sahm && sahm[1] >= 0.5 ? "bad" : sahm && sahm[1] >= 0.3 ? "warn" : "ok", t: `실업률 ${fmtN(un[1], 1)}%`,
-    s: (sahm ? `삼의 법칙 지표 ${fmtN(sahm[1], 2)} (0.5 이상이면 침체 신호)` : "") + (nfp ? ` · 최근 고용 ${nfp[1] >= 0 ? "+" : "−"}${fmtN(Math.abs(nfp[1]), 0)}천 명` : "") });
-  const gdp = L("GDP"), ret = L("RETAIL");
-  if (gdp) out.push({ lv: gdp[1] < 0 ? "bad" : gdp[1] < 1 ? "warn" : "ok", t: `실질 GDP ${fmtN(gdp[1], 1)}% (연율, ${fmtD(gdp[0], "ym")})`, s: ret ? `소매판매 전년비 ${fmtP(ret[1], 1)}` : "" });
-  const hy = L("HY"), nfci = L("NFCI");
-  if (hy) out.push({ lv: hy[1] > 5 ? "bad" : hy[1] > 4 ? "warn" : "ok", t: `하이일드 스프레드 ${fmtN(hy[1], 2)}%p`, s: (hy[1] > 5 ? "신용 불안 구간" : hy[1] > 4 ? "다소 벌어짐" : "신용 시장 안정") + (nfci ? ` · 금융여건지수 ${fmtN(nfci[1], 2)} (${nfci[1] < 0 ? "완화적" : "긴축적"})` : "") });
-  const vix = L("VIX");
-  if (vix) out.push({ lv: vix[1] >= 25 ? "bad" : vix[1] >= 18 ? "warn" : "ok", t: `VIX ${fmtN(vix[1], 1)}`, s: vix[1] >= 25 ? "공포 구간 — 변동성이 커요." : vix[1] >= 18 ? "평소보다 불안해요." : "시장이 평온해요." });
-  return out;
-}
-async function renderMacro() {
-  const wrap = viewShell("매크로 대시보드", "미국 연준 FRED 공식 통계 · 매일 아침 갱신");
-  const body = h("div", { style: { display: "flex", flexDirection: "column", gap: "18px" } }, h("div", { class: "loading" }, "불러오는 중…"));
-  wrap.append(body);
-  let m;
-  try { m = await loadMacro(); } catch (e) { clear(body).append(h("div", { class: "err" }, "매크로 데이터를 불러오지 못했어요.")); return; }
-  clear(body);
-  // regime
-  const tiles = regimeTiles(m);
-  const briefOut = h("div", { class: "ai-out" });
-  const briefBtn = h("button", { type: "button", class: "btn sm", hidden: !APP.cap.sample }, "AI 매크로 브리핑");
-  document.addEventListener("caps", () => { briefBtn.hidden = !APP.cap.sample; }, { once: true });
-  const briefStatus = h("span", { class: "ai-status" });
-  const cachedBrief = LS.get("macrobrief");
-  if (cachedBrief && cachedBrief.text && cachedBrief.upd === m.updated_at) { briefOut.innerHTML = mdToHtml(cachedBrief.text); briefStatus.textContent = relTime(cachedBrief.at) + " 작성"; }
-  briefBtn.addEventListener("click", () => macroBrief(m, tiles, briefOut, briefBtn, briefStatus));
-  body.append(h("section", { class: "panel" }, h("div", { class: "ph" }, h("h2", null, "지금 경제는"), h("span", { class: "sub" }, "규칙 기반 요약 · 최신 발표치")),
-    h("div", { class: "regime" }, tiles.map((t) => h("div", { class: "rg " + t.lv }, h("i"), h("div", null, h("b", null, t.t), h("span", null, t.s))))),
-    h("div", { class: "ai-ctl" }, briefBtn, briefStatus), briefOut));
-  // yield curve
-  if (m.curve && m.curve.rows && m.curve.rows.now) {
-    const cv = m.curve, cats = cv.tenors;
-    const ser = [["now", "var(--s1)", "최근"], ["m1", "var(--s2)", "1개월 전"], ["y1", "var(--s3)", "1년 전"]].filter(([k]) => cv.rows[k])
-      .map(([k, col, lab]) => ({ name: `${lab} (${fmtD(cv.rows[k].d, "md")})`, color: col, x: cats.map((_, i) => i), y: cv.rows[k].v, dots: true, fmt: (v) => fmtN(v, 2) + "%" }));
-    const box = h("div", { class: "chart" });
-    body.append(h("section", { class: "panel" }, h("div", { class: "ph" }, h("h2", null, "미 국채 수익률 곡선"), h("span", { class: "sub" }, "만기별 금리")),
-      legend(ser.map((s) => ({ name: s.name, color: s.color, kind: "line" }))), box,
-      h("p", { class: "note" }, "오른쪽이 올라가는 모양이 정상이에요. 단기 금리가 장기 금리보다 높으면(역전) 경기 둔화 우려가 크다는 뜻이에요.")));
-    lineChart(box, { height: 240, cats, series: ser, yFmt: (v) => fmtN(v, 1) + "%", label: "미 국채 수익률 곡선" });
-  }
-  // groups
-  for (const g of m.groups) {
-    const keys = Object.keys(m.series).filter((k) => m.series[k].group === g.id);
-    if (!keys.length) continue;
-    const grid = h("div", { class: "mcards" });
-    const sec = h("section", { class: "panel mgroup" }, h("h3", null, g.name), grid);
-    for (const key of keys) grid.append(macroCard(key, m.series[key], grid));
-    body.append(sec);
-  }
-  body.append(h("p", { class: "note" }, `FRED 수집 ${m.updated_at ? fmtD(m.updated_at.slice(0, 10)) : ""} · 월간 지표는 발표 시점에 한 달 이상 늦게 나와요. 카드를 누르면 긴 기간 차트가 열려요.`));
-  if (MAC.open && m.series[MAC.open]) {
-    const card = $(`.mc2[data-key="${MAC.open}"]`, body);
-    if (card) { card.click(); setTimeout(() => card.scrollIntoView({ block: "center" }), 50); }
-    MAC.open = null;
-  }
-}
-function macroCard(key, s, grid) {
-  const c = macroChange(s);
-  const n = s.freq === "D" ? 504 : s.freq === "W" ? 104 : s.freq === "Q" ? 12 : 36;
-  const btn = h("button", { type: "button", class: "mc2", "data-key": key, "aria-expanded": "false" },
-    h("div", { class: "hd" }, h("span", { class: "nm" }, s.name), h("span", { class: "dt" }, c.last ? fmtD(c.last[0], s.freq === "M" || s.freq === "Q" ? "ym" : "md") : "")),
-    h("div", { class: "row" }, h("span", { class: "v" }, macroFmt(s, c.last && c.last[1]), h("small", null, s.unit)), spark(s.obs.slice(-n).map((o) => o[1]), "var(--s1)", 110, 34)),
-    h("span", { class: "chg" }, [c.m1 ? (s.freq === "Q" ? "직전 분기 " : "1개월 ") + (macroDelta(s, c.last, c.m1) || "–") : null, c.y1 ? "1년 " + (macroDelta(s, c.last, c.y1) || "–") : null].filter(Boolean).join(" · ")));
-  btn.addEventListener("click", () => {
-    const open = btn.getAttribute("aria-expanded") === "true";
-    $$(".mc2", grid).forEach((b) => b.setAttribute("aria-expanded", "false"));
-    $$(".mdetail", grid).forEach((d) => d.remove());
-    if (open) return;
-    btn.setAttribute("aria-expanded", "true");
-    const det = h("div", { class: "mdetail" });
-    // insert after the last card of this visual row
-    const cards = $$(".mc2", grid);
-    const top = btn.offsetTop;
-    let after = btn;
-    for (const cd of cards) if (cd.offsetTop === top) after = cd;
-    after.after(det);
-    const seg = h("div", { class: "seg", role: "group", "aria-label": "기간" });
-    const box = h("div", { class: "chart" });
-    det.append(h("div", { class: "ctools" }, h("b", null, s.name + " (" + s.unit + ")"), seg), box,
-      h("p", { class: "note" }, s.desc + " ", h("a", { href: "https://fred.stlouisfed.org/series/" + s.id, target: "_blank", rel: "noopener" }, "FRED " + s.id + " ↗")));
-    const draw = () => {
-      const yrs = { "1Y": 1, "3Y": 3, "5Y": 5, "10Y": 10, "전체": 99 }[MAC.range];
-      const t0 = pd(s.obs[s.obs.length - 1][0]).getTime() - yrs * 365.25 * DAYMS;
-      const pts = s.obs.filter((o) => pd(o[0]).getTime() >= t0);
-      const zero = /%p$/.test(s.unit) || s.unit === "천 명" || key === "NFCI" || key === "SAHM";
-      lineChart(box, { height: 240, label: s.name, series: [{ name: s.name, color: "var(--s1)", x: pts.map((o) => pd(o[0]).getTime()), y: pts.map((o) => o[1]), area: !zero, fmt: (v) => macroFmt(s, v) + " " + s.unit }],
-        yFmt: (v) => macroFmt(s, v), refs: zero ? [{ y: key === "SAHM" ? 0.5 : 0, label: key === "SAHM" ? "침체 신호 0.5" : "" }] : [],
-        tipTitle: (t) => fmtD(new Date(t), s.freq === "M" || s.freq === "Q" ? "ym" : null), endLabel: true });
-    };
-    ["1Y", "3Y", "5Y", "10Y", "전체"].forEach((r) => {
-      const b = h("button", { type: "button", "aria-pressed": String(MAC.range === r) }, r);
-      b.addEventListener("click", () => { MAC.range = r; $$("button", seg).forEach((x) => x.setAttribute("aria-pressed", String(x === b))); draw(); });
-      seg.append(b);
-    });
-    draw();
-  });
-  return btn;
-}
-async function macroBrief(m, tiles, out, btn, status) {
-  const sample = APP.cap.sample;
-  if (!sample) return;
-  const snap = {};
-  for (const [k, s] of Object.entries(m.series)) {
-    const c = macroChange(s);
-    if (!c.last) continue;
-    snap[s.name] = { 최신: c.last[1], 날짜: c.last[0], 단위: s.unit, "직전 비교치(1개월·직전 분기 전)": c.m1 ? c.m1[1] : null, "1년 전": c.y1 ? c.y1[1] : null };
-  }
-  const prompt = "당신은 미국 매크로 이코노미스트예요. 아래 미국 경제 지표 최신값(FRED)만 근거로, 미국 주식에 투자하는 한국 개인 투자자를 위한 매크로 브리핑을 한국어로 써 주세요.\n" +
-    "형식: Markdown. ### 한 줄 요약, ### 금리와 연준, ### 물가, ### 고용과 성장, ### 신용·유동성·시장 심리, ### 주식 투자에 주는 시사점(유리한 업종·불리한 업종, 체크할 다음 발표) 순서. 전체 1,200~1,800자. 숫자는 주어진 값만 쓰고, 추측은 추측이라고 밝히세요. 마지막 줄에 '※ 참고용이며 투자 권유가 아닙니다.'\n\n" +
-    JSON.stringify({ 기준: m.updated_at, 국채수익률곡선: m.curve ? m.curve.rows : null, 지표: snap, 규칙기반요약: tiles.map((t) => t.t + " — " + t.s) });
-  btn.disabled = true;
-  status.textContent = "Claude가 지표를 읽는 중이에요…";
-  let latest = "", raf = 0;
-  const paint = () => { raf = 0; out.innerHTML = mdToHtml(latest); };
-  try {
-    const res = await sample(prompt, { modelTier: "default", cache: { gcTime: 43200000 }, onText: ({ text }) => { latest = text; status.textContent = "작성 중…"; if (!raf) raf = requestAnimationFrame(paint); } });
-    latest = res.text; paint();
-    LS.set("macrobrief", { text: res.text, at: Date.now(), upd: m.updated_at });
-    status.textContent = "완료";
-  } catch (e) {
-    if (e && e.text) { latest = e.text; paint(); }
-    status.textContent = sampleErrorText(e);
-  } finally { btn.disabled = false; }
 }
