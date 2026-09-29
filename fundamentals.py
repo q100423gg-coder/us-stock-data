@@ -944,7 +944,7 @@ def phase_bundle(universe, store, calendar):
     (site / "data" / "universe.json").write_text(json.dumps(uni, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
     sizes = []
     for i, sh in enumerate(shards):
-        s = json.dumps(sh, separators=(",", ":"), ensure_ascii=False)
+        s = json.dumps(sh, separators=(",", ":"), ensure_ascii=False).replace("\ufffd", "?")   # characters lost upstream
         (site / "data" / "f" / f"{i:02d}.json").write_text(s, encoding="utf-8")
         sizes.append(len(s))
     # earnings calendar for universe tickers: Nasdaq first, Yahoo's own date as fallback

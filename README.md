@@ -12,6 +12,9 @@
   - `fund_store.json.gz`(종목별 기업 데이터 누적본), `analysis_bundle.tar.gz`(페이지용 데이터 묶음) —
     `fundamentals.yml`이 가격 수집이 끝나면 `fundamentals.py`로 야후 파이낸스에서 받아요
     (프로필, 재무제표, 투자지표, 실적·컨센서스, 애널리스트 의견, 주주 구성, 내부자 거래, 배당, 뉴스)
+- `analysis_page/`: 기업 분석 노트 페이지 소스(`shell.html` + `*.js`)와 빌드 스크립트 `build_analysis.py`.
+  `python3 analysis_page/build_analysis.py --page-dir analysis_page --radar-summary <레이더 summary.json>
+  --radar-template <레이더 template.html>`로 `site/`를 만들고, 매일 아침 예약 작업이 같은 스크립트로 갱신해요.
 
 Daily bars (split-adjusted, not dividend-adjusted) for US stocks with market cap >= $2B, all S&P 500
 members, index/sector ETFs and `extra_tickers.txt`, refreshed by `.github/workflows/nightly-prices.yml`
