@@ -58,8 +58,7 @@ jobs:
         env:
           FUND_BUDGET_SEC: ${{ github.event.inputs.budget || '1500' }}
           FUND_ONLY: ${{ github.event.inputs.only || '' }}
-          # a code change refreshes every ticker's headlines so format changes reach the page at once
-          FUND_FORCE: ${{ github.event.inputs.force || (github.event_name == 'push' && 'news') || '' }}
+          FUND_FORCE: ${{ github.event.inputs.force || '' }}
 
       - name: Publish release assets
         if: always()

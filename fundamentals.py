@@ -889,17 +889,18 @@ def screener_row(t, urow, rec, px, calendar, fx_rates=None):
 
 
 def fetch_fx(currencies):
-    """{currency: USD per unit} from Yahoo's FX quotes (e.g. TWDUSD=X)"""
+    """{currency: USD per unit} from Yahoo's FX quotes (USDTWD=X, inverted)"""
     out = {}
     for cur in sorted(currencies):
         if not re.fullmatch(r"[A-Z]{3}", cur or ""):
             continue
         try:
-            j = get_json(CHART_URL + f"{cur}USD=X", params={"range": "5d", "interval": "1d"})
+            # quote USD/XXX and invert: XXX/USD quotes are rounded to 4 decimals (KRW would be 0.0007)
+            j = get_json(CHART_URL + f"USD{cur}=X", params={"range": "5d", "interval": "1d"})
             meta = (((j.get("chart") or {}).get("result") or [{}])[0] or {}).get("meta") or {}
             v = meta.get("regularMarketPrice")
             if isinstance(v, (int, float)) and v > 0:
-                out[cur] = float(v)
+                out[cur] = round(1.0 / float(v), 10)
         except Exception as e:
             print(f"fx {cur}: {type(e).__name__}: {e}", flush=True)
     STATUS["fx"] = out
