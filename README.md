@@ -6,6 +6,8 @@
 - 대상: 시가총액 20억 달러 이상 미국 상장 종목(ADR 포함) + S&P 500 전 종목 + 지수·섹터 ETF + `extra_tickers.txt`
 - 실행: 평일 22:17 UTC(한국 시간 다음 날 오전 7시 17분), 저장소 Actions 탭에서 수동 실행도 가능
 - 결과 파일: `releases/download/data/prices.parquet`, `universe.csv`, `manifest.json`
+- 기업 분석 페이지용: `macro.json`(FRED 매크로 지표 26개), `earnings_calendar.json`(Nasdaq 실적 발표 예정일) —
+  `macro.yml`이 평일 22:05 UTC에 `macro.py`로 받아 같은 릴리스에 올려요
 
 Daily bars (split-adjusted, not dividend-adjusted) for US stocks with market cap >= $2B, all S&P 500
 members, index/sector ETFs and `extra_tickers.txt`, refreshed by `.github/workflows/nightly-prices.yml`
