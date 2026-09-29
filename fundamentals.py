@@ -798,11 +798,22 @@ def ret_over(dates, closes, days_back):
     return pct(closes[-1], base)
 
 
+def reaction(dts, cls, d):
+    """close the session after the report vs the close before it (covers both pre-market and after-close reports)"""
+    if not d or not dts:
+        return None
+    i0 = max((i for i, x in enumerate(dts) if x < d), default=None)
+    i1 = next((i for i, x in enumerate(dts) if x > d), None)
+    if i0 is None or i1 is None or i1 - i0 > 4:
+        return None
+    return pct(cls[i1], cls[i0])
+
+
 def shard_of(t):
     return zlib.crc32(t.encode()) % NSHARDS
 
 
-def screener_row(t, urow, rec, px, calendar):
+def screener_row(t, urow, rec, px, calendar, fx_rates=None):
     """one universe row: identity, price stats, fundamentals scaled to the latest close"""
     k = (rec or {}).get("k") or {}
     p = (rec or {}).get("p") or {}
@@ -813,9 +824,17 @@ def screener_row(t, urow, rec, px, calendar):
     mc = k.get("mc")
     mc_now = mc * scale if mc else (float(urow["market_cap"]) / 1e6 if urow.get("market_cap") else None)
     eps, feps, bv = k.get("eps"), k.get("feps"), k.get("bv")
-    rev, ebitda, fcf = k.get("rev"), k.get("ebitda"), k.get("fcf")
-    debt, cash = k.get("debt") or 0, k.get("cash") or 0
-    ev_now = (mc_now + debt - cash) if mc_now and (k.get("debt") is not None or k.get("cash") is not None) else None
+    # foreign filers report statements in their own currency (Yahoo's own ratios mix currencies for them),
+    # so amounts are converted with the day's exchange rate and ratios are rebuilt from market cap
+    fcur = (p.get("fcur") or "USD").upper()
+    fx = 1.0 if fcur == "USD" else (fx_rates or {}).get(fcur)
+    usd = (lambda v: v * fx if (v is not None and fx) else None)
+    rev, ebitda, fcf = usd(k.get("rev")), usd(k.get("ebitda")), usd(k.get("fcf"))
+    debt, cash = usd(k.get("debt")) or 0, usd(k.get("cash")) or 0
+    ev_now = (mc_now + debt - cash) if mc_now and fx and (k.get("debt") is not None or k.get("cash") is not None) else None
+    fs = (rec or {}).get("fs") or {}
+    eq_last = next((v for tbl in (fs.get("q"), fs.get("a")) if tbl and tbl.get("eq") for v in reversed(tbl["eq"]) if v is not None), None)
+    ni_ttm = ((fs.get("t") or {}).get("ni") or [None, None])[1]
     tgt = (k.get("tgt") or [None])[0]
     nx = (calendar.get(t) or {}).get("d") or (e.get("nx") or {}).get("d")
     sec = p.get("sec") or NASDAQ_SECTOR.get(urow.get("sector") or "")
@@ -830,10 +849,13 @@ def screener_row(t, urow, rec, px, calendar):
         "r1m": ret_over(dts, cls, 30), "r3m": ret_over(dts, cls, 91), "r6m": ret_over(dts, cls, 182), "r1y": ret_over(dts, cls, 365),
         "ytd": None, "fh": pct(close, hi) if hi else None,
         "mc": round(mc_now / 1000, 3) if mc_now else None,                       # $ billions
-        "pe": rnd(close / eps, 2) if (close and eps and eps > 0) else None,
-        "fpe": rnd(close / feps, 2) if (close and feps and feps > 0) else None,
+        "pe": (rnd(close / eps, 2) if (close and eps and eps > 0) else None) if fcur == "USD" else
+              (rnd(mc_now / usd(ni_ttm), 2) if (mc_now and fx and ni_ttm and ni_ttm > 0) else None),
+        "fpe": (rnd(close / feps, 2) if (close and feps and feps > 0) else None) if fcur == "USD" else
+               (rnd(k["fpe"] * scale, 2) if k.get("fpe") and k["fpe"] > 0 else None),
         "ps": rnd(mc_now / rev, 2) if (mc_now and rev and rev > 0) else None,
-        "pb": rnd(close / bv, 2) if (close and bv and bv > 0) else None,
+        "pb": (rnd(close / bv, 2) if (close and bv and bv > 0) else None) if fcur == "USD" else
+              (rnd(mc_now / usd(eq_last), 2) if (mc_now and fx and eq_last and eq_last > 0) else None),
         "eve": rnd(ev_now / ebitda, 2) if (ev_now and ebitda and ebitda > 0) else None,
         "peg": k.get("peg"), "dy": rnd(k["dy"] * 100, 2) if k.get("dy") is not None else None,
         "rg": rnd(k["rg"] * 100, 1) if k.get("rg") is not None else None,
@@ -847,6 +869,8 @@ def screener_row(t, urow, rec, px, calendar):
         "rm": k.get("rm"), "up": pct(tgt, close) if (tgt and close) else None, "na": k.get("na"),
         "nx": nx, "beta": k.get("beta"), "si": rnd(k["si"] * 100, 2) if k.get("si") is not None else None,
         "lr": last_rep[6] if last_rep else None, "ls": last_rep[5] if last_rep else None,
+        "lrx": reaction(dts, cls, last_rep[6] if last_rep else None),
+        "fx": None if fcur == "USD" else (rnd(fx, 10) if fx else None), "fcur": None if fcur == "USD" else fcur,
         "at": (rec or {}).get("at", "")[:10] or None,
     }
     if dts:
@@ -864,6 +888,28 @@ def screener_row(t, urow, rec, px, calendar):
     return row
 
 
+def fetch_fx(currencies):
+    """{currency: USD per unit} from Yahoo's FX quotes (e.g. TWDUSD=X)"""
+    out = {}
+    for cur in sorted(currencies):
+        if not re.fullmatch(r"[A-Z]{3}", cur or ""):
+            continue
+        try:
+            j = get_json(CHART_URL + f"{cur}USD=X", params={"range": "5d", "interval": "1d"})
+            meta = (((j.get("chart") or {}).get("result") or [{}])[0] or {}).get("meta") or {}
+            v = meta.get("regularMarketPrice")
+            if isinstance(v, (int, float)) and v > 0:
+                out[cur] = float(v)
+        except Exception as e:
+            print(f"fx {cur}: {type(e).__name__}: {e}", flush=True)
+    STATUS["fx"] = out
+    return out
+
+
+BUNDLE_DROP = {"ih", "vc", "at_qs", "at_full", "at_news"}          # kept in the store, not shown on the page
+FS_DROP = {"nebitda", "beps", "nic", "tbv", "ic"}
+
+
 def phase_bundle(universe, store, calendar):
     t0 = time.time()
     dates, prices = load_prices()
@@ -872,15 +918,19 @@ def phase_bundle(universe, store, calendar):
         shutil.rmtree(site)
     (site / "data" / "f").mkdir(parents=True)
     di = {d: i for i, d in enumerate(dates)}
+    fx_rates = fetch_fx({((r.get("p") or {}).get("fcur") or "USD").upper() for r in store["tickers"].values()} - {"USD"})
     cols, shards = {}, [dict() for _ in range(NSHARDS)]
     for urow in universe:
         t = urow["ticker"]
         rec = store["tickers"].get(t)
         px = prices.get(t)
-        row = screener_row(t, urow, rec, px, calendar)
+        row = screener_row(t, urow, rec, px, calendar, fx_rates)
         for k, v in row.items():
             cols.setdefault(k, []).append(v)
-        full = dict(rec or {"t": t, "q": row["q"], "p": {"n": row["n"]}})
+        full = {k: v for k, v in (rec or {"t": t, "q": row["q"], "p": {"n": row["n"]}}).items() if k not in BUNDLE_DROP}
+        if full.get("fs"):
+            full["fs"] = {per: ({k: v for k, v in tbl.items() if k not in FS_DROP} if isinstance(tbl, dict) else tbl)
+                          for per, tbl in full["fs"].items()}
         if px:
             full["px"] = {"i0": di[px[0][0]], "c": delta_cents(px[1])}
         shards[row["sh"]][t] = full
