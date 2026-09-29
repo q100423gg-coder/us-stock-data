@@ -43,7 +43,7 @@ function noteData(r, R) {
       yahoo_monthly_multiples: r.fcur ? null : R.vm || null } : { note: r.fcur ? "외화 보고 기업이라 PER 과거 추이는 계산하지 않음" : "PER 과거 데이터 부족", yahoo_monthly_multiples: r.fcur ? null : R.vm || null },
     sector_medians: { pe: med.pe, fwd_pe: med.fpe, ps: med.ps, ev_ebitda: med.eve, op_margin_pct: med.om, roe_pct: med.roe, rev_growth_pct: med.rg },
     peers,
-    ttm: { revenue_m: k.rev, gross_profit_m: k.gp, ebitda_m: k.ebitda, net_income_m: k.ni, operating_cf_m: k.ocf, free_cf_m: k.fcf, cash_m: k.cash, debt_m: k.debt,
+    ttm: { revenue_m: k.rev, gross_profit_m: k.gp, ebitda_m: k.ebitda, net_income_m: k.ni, operating_cf_m: k.ocf, free_cf_m: fcfTTM(R), cash_m: k.cash, debt_m: k.debt,
       gross_margin: k.gm, op_margin: k.om, net_margin: k.pm, roe: k.roe, roa: k.roa, current_ratio: k.cr, quick_ratio: k.qr, debt_to_equity_pct: k.de,
       rev_growth_yoy_q: k.rg, earnings_growth_yoy_q: k.eg },
     annual: compactFS(R.fs && R.fs.a, "a", 5), quarterly: compactFS(R.fs && R.fs.q, "q", 6),

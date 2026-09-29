@@ -30,7 +30,7 @@ from zoneinfo import ZoneInfo
 HERE = Path(__file__).resolve().parent
 REL = "https://github.com/q100423gg-coder/us-stock-data/releases/download/data/"
 RADAR_URL = "https://claude.ai/artifact/Ac73mJW8XkFSg7h6JpuL3Y"
-JS_ORDER = ["core.js", "app_common.js", "app_company.js", "app_ai.js", "app_views.js", "app_macro.js", "app_main.js"]
+JS_ORDER = ["core.js", "app_common.js", "app_learn.js", "app_company.js", "app_ai.js", "app_views.js", "app_macro.js", "app_main.js"]
 NY = ZoneInfo("America/New_York")
 KST = ZoneInfo("Asia/Seoul")
 

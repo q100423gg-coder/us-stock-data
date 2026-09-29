@@ -63,6 +63,20 @@ function fsT(per) {
   const t = fs[per];
   return t.d && t.d.length ? t : null;
 }
+/** append (or insert before `before`) only when there is something to show */
+function appendIf(parent, node, before) { if (!node) return; if (before) parent.insertBefore(node, before); else parent.append(node); }
+/** years in a row with a higher yearly dividend (the current, unfinished year is left out) */
+function divStreak(dv) {
+  const byY = new Map();
+  for (const [d, a] of dv || []) { if (!d || !isNum(a)) continue; const y = d.slice(0, 4); byY.set(y, (byY.get(y) || 0) + a); }
+  const firstD = (dv || []).find((x) => x[0]);
+  if (firstD && parseInt(firstD[0].slice(5, 7), 10) > 3) byY.delete(firstD[0].slice(0, 4));
+  const curY = String(new Date().getFullYear());
+  const full = Array.from(byY.keys()).sort().slice(-11).filter((y) => y !== curY);
+  let streak = 0;
+  for (let i = full.length - 1; i > 0; i--) { if (byY.get(full[i]) > byY.get(full[i - 1]) * 1.001) streak++; else break; }
+  return streak;
+}
 function scrollEnd(el) { requestAnimationFrame(() => { el.scrollLeft = el.scrollWidth; }); return el; }
 function perLabels(t, per) { return t.d.map((d) => (per === "a" ? "FY" + d.slice(2, 4) : d.slice(2, 4) + "." + d.slice(5, 7))); }
 function secHead(title, sub, extra) {
@@ -106,7 +120,7 @@ async function renderCompany(sym) {
   const R = CO.rec;
   if (r.q === "ETF") {
     body.append(secNav([["s-ov", "개요"], ["s-px", "주가"], ["s-hold", "보유 종목"], ["s-div", "분배금"], ["s-news", "뉴스"]]));
-    body.append(secEtfOverview(R), secPrice(R), secHoldings(R), secDividends(R), secNews(R));
+    body.append(secEtfOverview(R), secPrice(R), secHoldings(R), secDividends(R), secNews(R), termGlossary());
   } else {
     const hasFund = !!(R.k || R.fs);
     body.append(h("div", { class: "co-top" }, researchBox(r, R), scorePanel(r, R)));
@@ -114,7 +128,7 @@ async function renderCompany(sym) {
       ["s-an", "애널리스트"], ["s-own", "주주·내부자"], ["s-div", "배당"], ["s-news", "뉴스"], ["s-ai", "AI 노트"]]));
     if (!hasFund) body.append(h("div", { class: "err" }, "이 종목의 기업 데이터를 아직 받지 못했어요. 오늘 밤 수집 뒤에 채워져요. 주가 정보는 아래에서 볼 수 있어요."));
     body.append(secOverview(r, R), secPrice(R), secEarnings(r, R), secStatements(R), secValuation(r, R), secAnalyst(r, R),
-      secOwnership(R), secDividends(R), secNews(R), secAI(r, R));
+      secOwnership(R), secDividends(R), secNews(R), secAI(r, R), termGlossary());
   }
   wireSecNav(body);
   liveQuote(sym, false);
@@ -222,15 +236,15 @@ function researchBox(r, R) {
   const dd = nx ? daysBetween(todayISO(), nx) : null;
   const calT = DATA.calMap && DATA.calMap[r.t] ? DATA.calMap[r.t].t : "";
   const rows1 = [
-    ["컨센서스 의견", k.rk ? `${REC_KO[k.rk] || k.rk}${isNum(k.rm) ? " (" + fmtN(k.rm, 2) + ")" : ""}` : "–"],
-    ["평균 목표주가", isNum(tgt) ? `${fmtPx(tgt)} (${fmtP(r.up, 1)})` : "–", krwP(tgt)],
+    [term("rating", "컨센서스 의견"), k.rk ? `${REC_KO[k.rk] || k.rk}${isNum(k.rm) ? " (" + fmtN(k.rm, 2) + ")" : ""}` : "–"],
+    [term("target", "평균 목표주가"), isNum(tgt) ? `${fmtPx(tgt)} (${fmtP(r.up, 1)})` : "–", krwP(tgt)],
     ["목표가 범위", k.tgt && isNum(k.tgt[3]) ? `${fmtPx(k.tgt[3])} ~ ${fmtPx(k.tgt[2])}` : "–", k.tgt && krwP(k.tgt[3]) ? `${krwP(k.tgt[3])} ~ ${krwP(k.tgt[2])}` : ""],
     ["애널리스트", isNum(k.na) ? k.na + "명" : "–"],
   ];
   const rows2 = [
-    ["시가총액", isNum(r.mc) ? fmtM(r.mc * 1000) : "–", krwM(isNum(r.mc) ? r.mc * 1000 : null)],
+    [term("mc", "시가총액"), isNum(r.mc) ? fmtM(r.mc * 1000) : "–", krwM(isNum(r.mc) ? r.mc * 1000 : null)],
     ["52주 범위", isNum(k.l52) ? `${fmtPx(k.l52)} ~ ${fmtPx(k.h52)}` : "–", isNum(k.l52) && krwP(k.l52) ? `${krwP(k.l52)} ~ ${krwP(k.h52)}` : ""],
-    ["PER · 선행 PER", `${isNum(r.pe) ? fmtN(r.pe, 1) + "배" : "적자/–"} · ${isNum(r.fpe) ? fmtN(r.fpe, 1) + "배" : "–"}`],
+    [[term("pe", "PER"), " · ", term("fpe", "선행 PER")], `${isNum(r.pe) ? fmtN(r.pe, 1) + "배" : "적자/–"} · ${isNum(r.fpe) ? fmtN(r.fpe, 1) + "배" : "–"}`],
     ["다음 실적 발표", nx ? `${fmtD(nx, "md")}${calT === "bmo" ? " 장 시작 전" : calT === "amc" ? " 장 마감 후" : ""}${isNum(dd) && dd >= 0 ? " (D-" + dd + ")" : ""}` : "–"],
   ];
   if (isNum(r.v)) rows1.push(["추세 레이더 판정", RADAR_KO[r.v] + (r.g ? " · 등급 " + r.g : "")]);
@@ -297,22 +311,22 @@ function secOverview(r, R) {
   const inWon = (v, f) => (krwM(v, f) ? krwM(v, f) + " · " : "");
   const fxw = fc === "KRW" ? null : fx;                           // won filers: the amount is already in won
   const tiles = [
-    ["시가총액", fmtM(isNum(r.mc) ? r.mc * 1000 : null), krwM(isNum(r.mc) ? r.mc * 1000 : null)],
-    ["기업가치(EV)", fmtM(ev), inWon(ev) + "시총 + 차입금 − 현금"],
-    ["매출(최근 12개월)", fmtM(k.rev, fc), inUsd(k.rev) + inWon(k.rev, fxw) + (isNum(r.rg) ? "전년 동기 대비 " + fmtP(r.rg) : "")],
-    ["순이익(최근 12개월)", fmtM(k.ni, fc), inUsd(k.ni) + inWon(k.ni, fxw) + (isNum(r.eg) ? "이익 성장 " + fmtP(r.eg) : "")],
-    ["PER · 선행 PER", `${isNum(r.pe) ? fmtN(r.pe, 1) : "–"} · ${isNum(r.fpe) ? fmtN(r.fpe, 1) : "–"}`, "배"],
-    ["PSR · PBR", `${isNum(r.ps) ? fmtN(r.ps, 1) : "–"} · ${isNum(r.pb) ? fmtN(r.pb, 1) : "–"}`, "배"],
-    ["EV/EBITDA", isNum(r.eve) ? fmtN(r.eve, 1) + "배" : "–", ""],
-    ["영업이익률", isNum(r.om) ? fmtP(r.om, 1, false) : "–", isNum(r.gm) ? "매출총이익률 " + fmtP(r.gm, 1, false) : ""],
-    ["ROE", isNum(r.roe) ? fmtP(r.roe, 1, false) : "–", isNum(k.roa) ? "ROA " + fmtR(k.roa) : ""],
-    ["부채비율(D/E)", isNum(r.de) ? fmtN(r.de, 0) + "%" : "–", isNum(r.cr) ? "유동비율 " + fmtN(r.cr, 2) + "배" : ""],
-    ["FCF 수익률", isNum(r.fcfy) ? fmtP(r.fcfy, 2, false) : "–", isNum(k.fcf) ? "FCF " + withK(fmtM(k.fcf, fc), krwM(k.fcf, fxw)) : ""],
-    ["배당수익률", isNum(r.dy) ? fmtP(r.dy, 2, false) : "없음", isNum(k.dr) ? "연 " + withK(fmtPx(k.dr), krwP(k.dr)) : ""],
-    ["베타", isNum(k.beta) ? fmtN(k.beta, 2) : "–", "시장 대비 변동성"],
-    ["공매도 비율", isNum(r.si) ? fmtP(r.si, 2, false) : "–", isNum(k.sr) ? "커버 " + fmtN(k.sr, 1) + "일" : "유통주식 대비"],
-    ["기관 · 내부자 보유", `${isNum(k.inst) ? fmtR(k.inst, 0) : "–"} · ${isNum(k.ins) ? fmtR(k.ins, 1) : "–"}`, ""],
-    ["발행주식수", fmtShares(k.sh), ""],
+    [term("mc", "시가총액"), fmtM(isNum(r.mc) ? r.mc * 1000 : null), krwM(isNum(r.mc) ? r.mc * 1000 : null)],
+    [term("ev", "기업가치(EV)"), fmtM(ev), inWon(ev) + "시총 + 차입금 − 현금"],
+    [[term("rev", "매출"), "(", term("ttm", "최근 12개월"), ")"], fmtM(k.rev, fc), inUsd(k.rev) + inWon(k.rev, fxw) + (isNum(r.rg) ? "전년 동기 대비 " + fmtP(r.rg) : "")],
+    [[term("ni", "순이익"), "(", term("ttm", "최근 12개월"), ")"], fmtM(k.ni, fc), inUsd(k.ni) + inWon(k.ni, fxw) + (isNum(r.eg) ? "이익 성장 " + fmtP(r.eg) : "")],
+    [[term("pe", "PER"), " · ", term("fpe", "선행 PER")], `${isNum(r.pe) ? fmtN(r.pe, 1) : "–"} · ${isNum(r.fpe) ? fmtN(r.fpe, 1) : "–"}`, "배"],
+    [[term("ps", "PSR"), " · ", term("pb", "PBR")], `${isNum(r.ps) ? fmtN(r.ps, 1) : "–"} · ${isNum(r.pb) ? fmtN(r.pb, 1) : "–"}`, "배"],
+    [term("eve", "EV/EBITDA"), isNum(r.eve) ? fmtN(r.eve, 1) + "배" : "–", ""],
+    [term("opm", "영업이익률"), isNum(r.om) ? fmtP(r.om, 1, false) : "–", isNum(r.gm) ? "매출총이익률 " + fmtP(r.gm, 1, false) : ""],
+    [term("roe", "ROE"), isNum(r.roe) ? fmtP(r.roe, 1, false) : "–", isNum(k.roa) ? "ROA " + fmtR(k.roa) : ""],
+    [term("de", "부채비율(D/E)"), isNum(r.de) ? fmtN(r.de, 0) + "%" : "–", isNum(r.cr) ? "유동비율 " + fmtN(r.cr, 2) + "배" : ""],
+    [term("fcfy", "FCF 수익률"), isNum(r.fcfy) ? fmtP(r.fcfy, 2, false) : "–", isNum(fcfTTM(R)) ? "최근 12개월 FCF " + withK(fmtM(fcfTTM(R), fc), krwM(fcfTTM(R), fxw)) : ""],
+    [term("dy", "배당수익률"), isNum(r.dy) ? fmtP(r.dy, 2, false) : "없음", isNum(k.dr) ? "연 " + withK(fmtPx(k.dr), krwP(k.dr)) : ""],
+    [term("beta", "베타"), isNum(k.beta) ? fmtN(k.beta, 2) : "–", "시장 대비 변동성"],
+    [term("si", "공매도 비율"), isNum(r.si) ? fmtP(r.si, 2, false) : "–", isNum(k.sr) ? "커버 " + fmtN(k.sr, 1) + "일" : "유통주식 대비"],
+    [[term("inst", "기관"), " · ", term("ins", "내부자"), " 보유"], `${isNum(k.inst) ? fmtR(k.inst, 0) : "–"} · ${isNum(k.ins) ? fmtR(k.ins, 1) : "–"}`, ""],
+    [term("so", "발행주식수"), fmtShares(k.sh), ""],
   ];
   sec.append(h("div", { class: "kv" }, tiles.map(([a, b, c]) => kvTile(a, b, c))));
   return sec;
@@ -446,6 +460,7 @@ function secEarnings(r, R) {
   const sec = h("section", { class: "panel sec", id: "s-earn" }, secHead("실적", "EPS는 조정(Non-GAAP) 기준 컨센서스와 비교"));
   // statements' currency, USD per unit for the won amounts (none when already in won), EPS estimates' currency
   const cur = repCur(R), fx = cur === "KRW" ? null : fxOf(r), ec = epsCur(R, r);
+  appendIf(sec, easyBox("실적 쉽게 읽기", earnRead(r, R), "EPS는 보통 조정(Non-GAAP) 기준이에요. 실적 발표 날에는 결과와 함께 회사가 내놓는 다음 분기 전망(가이던스)에 따라 주가가 크게 움직여요."));
   // next report
   const nx = r.nx || (e.nx && e.nx.d);
   const cal = DATA.calMap && DATA.calMap[r.t];
@@ -468,9 +483,9 @@ function secEarnings(r, R) {
     const surp = h("div", { class: "surp" });
     sec.append(h("div", { class: "grid2" },
       h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } },
-        h("h3", { class: "sub-h" }, "EPS 실제 vs 예상" + (ec && ec !== "USD" ? ` (${ec})` : "")),
+        h("h3", { class: "sub-h" }, term("eps", "EPS"), " 실제 vs 예상" + (ec && ec !== "USD" ? ` (${ec})` : "")),
         legend([{ name: "실제 EPS", color: "var(--s1)", kind: "box" }, { name: "예상 EPS(컨센서스)", color: "var(--ink)", kind: "tick" }]), box),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, h("h3", { class: "sub-h" }, "어닝 서프라이즈"), surp)));
+      h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, h("h3", { class: "sub-h" }, term("surprise", "어닝 서프라이즈")), surp)));
     const epsTip = (v) => withK(fmtPS(v, ec), krwC(v, ec, fx));
     barChart(box, { height: 200, cats, yFmt: (v) => (ec === "USD" ? "$" : "") + fmtN(v, Math.abs(v) < 10 ? 2 : 1),
       series: [{ name: "실제 EPS", color: "var(--s1)", values: hist.map((x) => x[3]), fmt: epsTip }, { name: "예상 EPS", color: "var(--ink)", kind: "tick", values: hist.map((x) => x[4]), fmt: epsTip }],
@@ -497,11 +512,11 @@ function secEarnings(r, R) {
         arr.map((v, i) => nCell(f(v), won && isNum(v) ? won(v) : "", yo ? yoyAt(arr, i, 4) : null, "YoY "))));
     };
     const wonM = (v) => krwM(v, fx);
-    line("매출", q.rev, (v) => fmtM(v, cur), true, true, wonM);
-    line("영업이익", q.oi, (v) => fmtM(v, cur), true, false, wonM);
-    if (q.oi && q.rev) line("영업이익률", q.oi.map((v, i) => ratio(v, q.rev[i])), (v) => (isNum(v) ? fmtP(v, 1, false) : "–"));
-    line("순이익", q.ni, (v) => fmtM(v, cur), true, false, wonM);
-    line("희석 EPS", q.eps, (v) => fmtPS(v, cur), true, false, (v) => krwC(v, cur, fx));
+    line(term("rev", "매출"), q.rev, (v) => fmtM(v, cur), true, true, wonM);
+    line(term("oi", "영업이익"), q.oi, (v) => fmtM(v, cur), true, false, wonM);
+    if (q.oi && q.rev) line(term("opm", "영업이익률"), q.oi.map((v, i) => ratio(v, q.rev[i])), (v) => (isNum(v) ? fmtP(v, 1, false) : "–"));
+    line(term("ni", "순이익"), q.ni, (v) => fmtM(v, cur), true, false, wonM);
+    line(term("eps", "희석 EPS"), q.eps, (v) => fmtPS(v, cur), true, false, (v) => krwC(v, cur, fx));
     tbl.append(tb);
     sec.append(h("h3", { class: "sub-h" }, "최근 분기 실적"), scrollEnd(h("div", { class: "tw" }, tbl)),
       h("p", { class: "note" }, "표의 EPS는 회계 기준(GAAP) 희석 EPS라서 위 서프라이즈 차트의 조정 EPS와 다를 수 있어요. YoY는 4분기 전과 비교했어요." + krwNote()));
@@ -511,6 +526,11 @@ function secEarnings(r, R) {
 }
 
 // ---------------------------------------------------------------- statements
+const ST_DESC = {
+  inc: ["손익계산서", "1년(또는 한 분기) 동안 얼마를 팔고, 얼마를 쓰고, 얼마를 남겼는지 보여줘요. 매출에서 비용을 하나씩 빼며 내려가요: 매출 → 매출총이익 → 영업이익 → 순이익."],
+  bal: ["재무상태표", "회계연도 마지막 날 회사가 가진 것(자산), 갚아야 할 것(부채), 주주의 몫(자본)을 보여줘요. 언제나 자산 = 부채 + 자본이에요."],
+  cf: ["현금흐름표", "실제 현금이 어디서 들어오고 어디로 나갔는지 보여줘요. 본업(영업), 투자(설비·인수), 재무(빚·배당·자사주) 세 갈래로 나눠요."],
+};
 const ST_ROWS = {
   inc: [["rev", "매출액", "b"], ["cogs", "매출원가"], ["gp", "매출총이익", "b"], ["%gp", "  매출총이익률", "m"], ["rd", "연구개발비"], ["sga", "판매관리비"],
     ["oi", "영업이익", "b"], ["%oi", "  영업이익률", "m"], ["ebitda", "EBITDA"], ["nii", "순이자이익"], ["intx", "이자비용"], ["pti", "세전이익"], ["tax", "법인세"],
@@ -528,8 +548,10 @@ function secStatements(R) {
   const charts = h("div", { class: "grid2" });
   const table = h("div");
   const cur = (R.p && R.p.fcur) || "USD";
+  const stDesc = h("p", { class: "stdesc" });
   sec.append(secHead("재무제표", cur !== "USD" ? `보고 통화 ${cur}${isNum(CO.row.fx) ? " (1 " + cur + " = $" + (CO.row.fx < 0.01 ? CO.row.fx.toPrecision(3) : fmtN(CO.row.fx, 4)) + ")" : ""} · 야후 파이낸스 표준화` : "야후 파이낸스 표준화 재무제표"),
-    h("div", { class: "ctools" }, perSeg, stSeg), charts, table);
+    h("div", { class: "ctools" }, perSeg, stSeg), charts, stDesc, table);
+  appendIf(sec, easyBox("재무제표 쉽게 읽기 (최근 회계연도 기준)", fsRead(CO.row, R), "점선 밑줄이 있는 용어를 누르거나 마우스를 올리면 뜻이 나와요."), sec.children[1]);
   if (!fsT("a") && !fsT("q")) { sec.append(h("p", { class: "empty" }, "재무제표 데이터가 없어요.")); return sec; }
   [["a", "연간"], ["q", "분기"]].forEach(([id, lab]) => {
     const b = h("button", { type: "button", "aria-pressed": String(CO.per === id) }, lab);
@@ -544,9 +566,9 @@ function secStatements(R) {
   const money = (v) => fmtM(v, cur);
   const fx = cur === "KRW" ? null : fxOf(CO.row);
   const tip = (v) => withK(money(v), krwM(v, fx));             // chart tooltips: amount and won
-  function chartCard(title, leg, fn) {
+  function chartCard(title, leg, fn, cap) {
     const box = h("div", { class: "chart" });
-    charts.append(h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 } }, h("h3", { class: "sub-h" }, title), leg, box));
+    charts.append(h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 } }, h("h3", { class: "sub-h" }, title), cap ? h("p", { class: "ccap" }, cap) : null, leg, box));
     fn(box);
   }
   function draw() {
@@ -557,26 +579,31 @@ function secStatements(R) {
     const S = (key) => t[key] || t.d.map(() => null);
     chartCard("매출과 이익", legend([{ name: "매출", color: "var(--s1)" }, { name: "영업이익", color: "var(--s2)" }, { name: "순이익", color: "var(--s3)" }]), (box) =>
       barChart(box, { height: 210, cats, yFmt: (v) => fmtM(v, cur), label: "매출과 이익",
-        series: [{ name: "매출", color: "var(--s1)", values: S("rev"), fmt: tip }, { name: "영업이익", color: "var(--s2)", values: S("oi"), fmt: tip }, { name: "순이익", color: "var(--s3)", values: S("ni"), fmt: tip }] }));
+        series: [{ name: "매출", color: "var(--s1)", values: S("rev"), fmt: tip }, { name: "영업이익", color: "var(--s2)", values: S("oi"), fmt: tip }, { name: "순이익", color: "var(--s3)", values: S("ni"), fmt: tip }] }),
+      "세 막대가 함께 커지면 좋아요. 매출보다 이익이 빠르게 늘면 장사를 더 효율적으로 한다는 뜻이에요.");
     const gm = S("gp").map((v, i) => ratio(v, S("rev")[i])), om = S("oi").map((v, i) => ratio(v, S("rev")[i])), nm = S("ni").map((v, i) => ratio(v, S("rev")[i]));
     chartCard("이익률 추이", legend([{ name: "매출총이익률", color: "var(--s1)", kind: "line" }, { name: "영업이익률", color: "var(--s2)", kind: "line" }, { name: "순이익률", color: "var(--s3)", kind: "line" }]), (box) =>
       lineChart(box, { height: 210, cats, label: "이익률 추이", yFmt: (v) => fmtN(v, 0) + "%",
         series: [{ name: "매출총이익률", color: "var(--s1)", x: cats.map((_, i) => i), y: gm, dots: true, fmt: (v) => fmtP(v, 1, false) },
           { name: "영업이익률", color: "var(--s2)", x: cats.map((_, i) => i), y: om, dots: true, fmt: (v) => fmtP(v, 1, false) },
-          { name: "순이익률", color: "var(--s3)", x: cats.map((_, i) => i), y: nm, dots: true, fmt: (v) => fmtP(v, 1, false) }] }));
+          { name: "순이익률", color: "var(--s3)", x: cats.map((_, i) => i), y: nm, dots: true, fmt: (v) => fmtP(v, 1, false) }] }),
+      "매출 100원 중 몇 원이 남는지예요. 선이 올라가면 같은 매출로 더 많이 남긴다는 뜻이에요.");
     chartCard("현금흐름", legend([{ name: "영업현금흐름", color: "var(--s1)" }, { name: "설비투자", color: "var(--s2)" }, { name: "잉여현금흐름", color: "var(--s3)" }]), (box) =>
       barChart(box, { height: 210, cats, yFmt: money, label: "현금흐름",
-        series: [{ name: "영업현금흐름", color: "var(--s1)", values: S("ocf"), fmt: tip }, { name: "설비투자", color: "var(--s2)", values: S("capex"), fmt: tip }, { name: "잉여현금흐름", color: "var(--s3)", values: S("fcf"), fmt: tip }] }));
+        series: [{ name: "영업현금흐름", color: "var(--s1)", values: S("ocf"), fmt: tip }, { name: "설비투자", color: "var(--s2)", values: S("capex"), fmt: tip }, { name: "잉여현금흐름", color: "var(--s3)", values: S("fcf"), fmt: tip }] }),
+      "잉여현금흐름(영업현금흐름 − 설비투자)이 꾸준히 플러스면 좋아요. 설비투자는 현금이 나가서 마이너스로 표시돼요.");
     const cashS = t.csti && t.csti.some(isNum) ? S("csti") : S("cash");
     chartCard("현금과 차입금", legend([{ name: t.csti && t.csti.some(isNum) ? "현금·단기투자" : "현금성자산", color: "var(--s1)" }, { name: "총차입금", color: "var(--s2)" }, { name: "자본총계", color: "var(--s3)" }]), (box) =>
       barChart(box, { height: 210, cats, yFmt: money, label: "현금과 차입금",
-        series: [{ name: "현금", color: "var(--s1)", values: cashS, fmt: tip }, { name: "총차입금", color: "var(--s2)", values: S("td"), fmt: tip }, { name: "자본총계", color: "var(--s3)", values: S("eq"), fmt: tip }] }));
+        series: [{ name: "현금", color: "var(--s1)", values: cashS, fmt: tip }, { name: "총차입금", color: "var(--s2)", values: S("td"), fmt: tip }, { name: "자본총계", color: "var(--s3)", values: S("eq"), fmt: tip }] }),
+      "현금이 총차입금보다 많으면 빚을 다 갚고도 돈이 남아요. 자본총계는 빚을 뺀 주주의 몫이에요.");
     drawTable();
   }
   function drawTable() {
     clear(table);
     const per = fsT(CO.per) ? CO.per : (CO.per === "a" ? "q" : "a");
     const t = fsT(per);
+    clear(stDesc).append(h("b", null, ST_DESC[CO.stmt][0] + " "), ST_DESC[CO.stmt][1]);
     if (!t) return;
     const labs = perLabels(t, per);
     const trailing = per === "a" && CO.stmt !== "bal" ? (R.fs && R.fs.t) || {} : {};
@@ -602,7 +629,7 @@ function secStatements(R) {
       const showYoy = kind === "b" || kind === "eps";
       const won = kind === "m" || kind === "sh" ? null : kind === "eps" ? (v) => krwC(v, cur, fx) : (v) => krwM(v, fx);
       tb.append(h("tr", { class: kind === "b" ? "strong" : kind === "m" ? "sub" : null },
-        h("td", null, lab.trim()),
+        h("td", null, term(key, lab.trim())),
         arr.map((v, i) => nCell(f(v), won && isNum(v) ? won(v) : "", showYoy ? yoyAt(arr, i, lag) : null)),
         hasTTM ? nCell(isNum(ttm) ? f(ttm) : "", won && isNum(ttm) ? won(ttm) : "", null) : null));
     }
@@ -669,17 +696,18 @@ function secValuation(r, R) {
     return kvTile(label, isNum(v) ? f(v) : "–", subs.length ? h("small", null, subs) : null);
   };
   const peHistTxt = isNum(peAvg) ? `${pePeriod} 평균 ${fmtN(peAvg, 1)}배` : null;
-  sec.append(secHead("투자지표", "현재 배수 vs 같은 섹터 중앙값 · 과거 평균"),
-    h("div", { class: "kv" },
-      tile("PER (최근 12개월)", r.pe, med.pe, peHistTxt),
-      tile("선행 PER", r.fpe, med.fpe),
-      tile("PEG", k.peg, med.peg, null, true, (x) => fmtN(x, 2)),
-      tile("PSR", r.ps, med.ps),
-      tile("PBR", r.pb, med.pb),
-      tile("EV/EBITDA", r.eve, med.eve),
-      kvTile("EV/매출", isNum(evs) ? fmtN(evs, 1) + "배" : "–", null),
-      kvTile("FCF 수익률", isNum(r.fcfy) ? fmtP(r.fcfy, 2, false) : "–", isNum(med.fcfy) ? "섹터 중앙값 " + fmtP(med.fcfy, 2, false) : null),
-      kvTile("배당수익률", isNum(r.dy) ? fmtP(r.dy, 2, false) : "없음", isNum(med.dy) ? "섹터 중앙값 " + fmtP(med.dy, 2, false) : null)));
+  sec.append(secHead("투자지표", "현재 배수 vs 같은 섹터 중앙값 · 과거 평균"));
+  appendIf(sec, easyBox("투자지표 쉽게 읽기", valRead(r, R, { med, peAvg, pePeriod }), "싸다·비싸다는 가격만 본 거예요. 싼 데는 이유가 있을 수 있고, 성장이 빠른 회사는 비싸게 거래되는 게 보통이에요."));
+  sec.append(h("div", { class: "kv" },
+      tile([term("pe", "PER"), " (최근 12개월)"], r.pe, med.pe, peHistTxt),
+      tile(term("fpe", "선행 PER"), r.fpe, med.fpe),
+      tile(term("peg", "PEG"), k.peg, med.peg, null, true, (x) => fmtN(x, 2)),
+      tile(term("ps", "PSR"), r.ps, med.ps),
+      tile(term("pb", "PBR"), r.pb, med.pb),
+      tile(term("eve", "EV/EBITDA"), r.eve, med.eve),
+      kvTile(term("evs", "EV/매출"), isNum(evs) ? fmtN(evs, 1) + "배" : "–", null),
+      kvTile(term("fcfy", "FCF 수익률"), isNum(r.fcfy) ? fmtP(r.fcfy, 2, false) : "–", isNum(med.fcfy) ? "섹터 중앙값 " + fmtP(med.fcfy, 2, false) : null),
+      kvTile(term("dy", "배당수익률"), isNum(r.dy) ? fmtP(r.dy, 2, false) : "없음", isNum(med.dy) ? "섹터 중앙값 " + fmtP(med.dy, 2, false) : null)));
   // P/E history
   if (phv.length >= 6) {
     const box = h("div", { class: "chart" });
@@ -746,6 +774,7 @@ function secAnalyst(r, R) {
   const k = R.k || {}, e = R.e || {};
   const sec = h("section", { class: "panel sec", id: "s-an" }, secHead("애널리스트 전망", isNum(k.na) ? `${k.na}명 커버리지` : ""));
   const top = h("div", { class: "grid2" });
+  appendIf(sec, easyBox("애널리스트 전망 쉽게 읽기", anRead(r, R), "목표주가는 자주 틀리고 주가를 따라 바뀌는 경우가 많아요. 숫자보다 올리는지 내리는지 방향을 참고하세요."));
   sec.append(top);
   // target price
   const tg = k.tgt;
@@ -753,7 +782,7 @@ function secAnalyst(r, R) {
     const lo = Math.min(tg[3] ?? tg[0], r.c), hi = Math.max(tg[2] ?? tg[0], r.c);
     const pad = (hi - lo) * 0.06;
     top.append(h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } },
-      h("h3", { class: "sub-h" }, "목표주가"),
+      h("h3", { class: "sub-h" }, term("target", "목표주가")),
       h("div", { class: "facts" }, [["평균", tg[0]], ["중앙값", tg[1]], ["최고", tg[2]], ["최저", tg[3]]].map(([lab, v]) =>
         h("span", null, lab + " ", h("b", null, fmtPx(v)), krwP(v) ? h("span", { class: "fx" }, " " + krwP(v)) : null))),
       rangeTrack(lo - pad, hi + pad, [{ v: tg[3], cls: "lo", title: "최저 목표가" }, { v: tg[2], cls: "hi", title: "최고 목표가" }, { v: tg[0], cls: "tgt", title: "평균 목표가" }, { v: r.c, cls: "", title: "현재가" }],
@@ -782,7 +811,7 @@ function secAnalyst(r, R) {
       rows.append(h("div", { class: "recrow" }, h("span", null, labs[x[0]] || x[0]), bar, h("span", { class: "n" }, fmtN(buyPct, 0) + "%")));
     }
     top.append(h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } },
-      h("h3", { class: "sub-h" }, "투자의견 분포 (오른쪽 숫자 = 매수 비율)"), rows,
+      h("h3", { class: "sub-h" }, term("rating", "투자의견"), " 분포 (오른쪽 숫자 = 매수 비율)"), rows,
       h("div", { class: "legend" }, [["rk5", "강력 매수"], ["rk4", "매수"], ["rk3", "중립"], ["rk2", "매도"], ["rk1", "강력 매도"]].map(([c, nm]) =>
         h("span", { class: "k" }, h("i", { class: "lk box " + c }), nm)))));
   }
@@ -805,7 +834,7 @@ function secAnalyst(r, R) {
         h("td", { class: "n" }, isNum(x[6]) ? x[6] + "명" : "–")));
     }
     tbl.append(tb);
-    sec.append(h("h3", { class: "sub-h" }, "컨센서스 추정치"), h("div", { class: "tw" }, tbl));
+    sec.append(h("h3", { class: "sub-h" }, term("consensus", "컨센서스"), " 추정치"), h("div", { class: "tw" }, tbl));
     if (cur !== "USD") sec.append(h("p", { class: "note" }, `매출 추정치는 보고 통화(${cur}) 기준이에요.` + (ec === "USD" ? " EPS는 미국 상장 주식(ADR) 1주당 달러 기준이에요." : ec ? ` EPS도 ${ec} 기준이에요.` : " EPS 통화는 확인되지 않아 숫자만 표시했어요.")));
     // EPS trend & revisions
     const tbl2 = h("table", { class: "t" });
@@ -819,7 +848,7 @@ function secAnalyst(r, R) {
         h("td", { class: "n" }, h("span", { class: "up" }, "▲" + (x[19] ?? 0)), " / ", h("span", { class: "dn" }, "▼" + (x[21] ?? 0)))));
     }
     tbl2.append(tb2);
-    sec.append(h("h3", { class: "sub-h" }, "EPS 추정치 변화"), h("div", { class: "tw" }, tbl2),
+    sec.append(h("h3", { class: "sub-h" }, term("revision", "EPS 추정치 변화")), h("div", { class: "tw" }, tbl2),
       h("p", { class: "note" }, "추정치가 올라가는 종목(상향 우위)은 실적 기대가 좋아지고 있다는 뜻이에요."));
   }
   // rating changes
@@ -850,6 +879,7 @@ function secOwnership(R) {
   const own = R.own || {}, k = R.k || {};
   const sec = h("section", { class: "panel sec", id: "s-own" }, secHead("주주 구성 · 내부자 거래", isNum(own.n) ? `기관 ${fmtN(own.n)}곳 보유` : ""));
   const ins = own.ins ?? k.ins, inst = own.inst ?? k.inst;
+  appendIf(sec, easyBox("주주 구성 쉽게 읽기", ownRead(R)));
   if (isNum(ins) || isNum(inst)) {
     const a = Math.max(0, (ins || 0) * 100), b = Math.max(0, Math.min(100 - a, (inst || 0) * 100)), c = Math.max(0, 100 - a - b);
     const bar = h("div", { class: "ownbar", role: "img", "aria-label": `내부자 ${fmtN(a, 1)}%, 기관 ${fmtN(b, 1)}%, 기타 ${fmtN(c, 1)}%` });
@@ -895,11 +925,11 @@ function secOwnership(R) {
         nCell(x[5] ? "$" + fmtBig(x[5]) : "–", x[5] ? krwP(x[5]) : "", null), h("td", { class: "l muted", title: x[3] || "" }, (x[3] || "").slice(0, 60))));
     }
     tbl.append(tb);
-    sec.append(h("h3", { class: "sub-h" }, "최근 내부자 거래 (SEC Form 4)"), h("div", { class: "tw" }, tbl));
+    sec.append(h("h3", { class: "sub-h" }, "최근 내부자 거래 (", term("form4", "SEC Form 4"), ")"), h("div", { class: "tw" }, tbl));
   }
   const gov = R.p && R.p.gov;
   if (gov && gov.some(isNum)) {
-    sec.append(h("h3", { class: "sub-h" }, "지배구조 위험 점수 (ISS, 1=낮음 · 10=높음)"),
+    sec.append(h("h3", { class: "sub-h" }, term("gov", "지배구조 위험 점수"), " (ISS, 1=낮음 · 10=높음)"),
       h("div", { class: "kv" }, [["감사", gov[0]], ["이사회", gov[1]], ["보상", gov[2]], ["주주 권리", gov[3]], ["종합", gov[4]]].map(([a, b]) => kvTile(a, isNum(b) ? String(b) : "–", null))));
   }
   const off = R.p && R.p.off;
@@ -921,17 +951,19 @@ function secDividends(R) {
   const etf = R.q === "ETF";
   const sec = h("section", { class: "panel sec", id: "s-div" }, secHead(etf ? "분배금" : "배당 · 주주환원", ""));
   const dv = R.dv || [];
+  const slot = h("div");
+  if (!etf) sec.append(slot);
   const tiles = [
-    kvTile(etf ? "분배율" : "배당수익률", isNum(k.dy) ? fmtR(k.dy, 2) : "없음", null),
+    kvTile(etf ? term("etfdy", "분배율") : term("dy", "배당수익률"), isNum(k.dy) ? fmtR(k.dy, 2) : "없음", null),
     kvTile("연간 배당금", isNum(k.dr) ? fmtPx(k.dr) : isNum(k.tdr) ? fmtPx(k.tdr) : "–",
       [krwP(isNum(k.dr) ? k.dr : k.tdr), isNum(k.tdr) && isNum(k.dr) ? "지난 12개월 " + withK(fmtPx(k.tdr), krwP(k.tdr)) : ""].filter(Boolean).join(" · ") || null),
   ];
   if (!etf) {
-    tiles.push(kvTile("배당성향", isNum(k.pay) ? fmtR(k.pay, 1) : "–", "순이익 중 배당 비율"));
+    tiles.push(kvTile(term("pay", "배당성향"), isNum(k.pay) ? fmtR(k.pay, 1) : "–", "순이익 중 배당 비율"));
     tiles.push(kvTile("5년 평균 수익률", isNum(k.d5y) ? fmtP(k.d5y, 2, false) : "–", null));
   }
-  tiles.push(kvTile("배당락일", k.exd ? fmtD(k.exd) : "–", k.exd && k.exd >= todayISO() ? "예정" : null));
-  if (k.dvd) tiles.push(kvTile("지급일", fmtD(k.dvd), null));
+  tiles.push(kvTile(term("exd", "배당락일"), k.exd ? fmtD(k.exd) : "–", k.exd && k.exd >= todayISO() ? "예정" : null));
+  if (k.dvd) tiles.push(kvTile(term("payd", "지급일"), fmtD(k.dvd), null));
   sec.append(h("div", { class: "kv" }, tiles));
   if (dv.length) {
     const byY = new Map();
@@ -953,6 +985,7 @@ function secDividends(R) {
     sec.append(h("p", { class: "lede" }, "최근 10여 년 동안 배당을 지급하지 않았어요."));
   }
   const a = R.fs && R.fs.a;
+  if (!etf) { const eb = easyBox("배당 쉽게 읽기", divRead(CO.row, R, divStreak(dv))); if (eb) slot.replaceWith(eb); else slot.remove(); }
   if (!etf && a && (a.buy || a.div)) {
     const cats = perLabels(a, "a");
     const neg = (arr) => (arr || a.d.map(() => null)).map((v) => (isNum(v) ? -v : null));
@@ -1026,9 +1059,9 @@ function secEtfOverview(R) {
   const sec = h("section", { class: "panel sec", id: "s-ov" }, secHead("개요", [p.fam, p.cat].filter(Boolean).join(" · ")));
   if (p.sum) sec.append(h("p", { class: "desc", lang: "en" }, p.sum));
   sec.append(h("div", { class: "kv" },
-    kvTile("순자산(AUM)", fmtM(k.aum), krwM(k.aum) || null), kvTile("총보수", isNum(k.er) ? fmtR(k.er, 2) : "–", null),
-    kvTile("분배율", isNum(k.dy) ? fmtR(k.dy, 2) : "–", null), kvTile("PER(보유 종목)", isNum(k.pe) ? fmtN(k.pe, 1) + "배" : "–", null),
-    kvTile("베타(3년)", isNum(k.beta) ? fmtN(k.beta, 2) : "–", null), kvTile("3년 연평균", isNum(k.r3y) ? fmtR(k.r3y, 1) : "–", null),
+    kvTile(term("aum", "순자산(AUM)"), fmtM(k.aum), krwM(k.aum) || null), kvTile(term("er", "총보수"), isNum(k.er) ? fmtR(k.er, 2) : "–", null),
+    kvTile(term("etfdy", "분배율"), isNum(k.dy) ? fmtR(k.dy, 2) : "–", null), kvTile(term("etfpe", "PER(보유 종목)"), isNum(k.pe) ? fmtN(k.pe, 1) + "배" : "–", null),
+    kvTile([term("beta", "베타"), "(3년)"], isNum(k.beta) ? fmtN(k.beta, 2) : "–", null), kvTile("3년 연평균", isNum(k.r3y) ? fmtR(k.r3y, 1) : "–", null),
     kvTile("5년 연평균", isNum(k.r5y) ? fmtR(k.r5y, 1) : "–", null), kvTile("52주 범위", isNum(k.l52) ? `${px0(k.l52)} ~ ${px0(k.h52)}` : "–", isNum(k.l52) && krwP(k.l52) ? `${krwP(k.l52)} ~ ${krwP(k.h52)}` : null)));
   return sec;
 }
