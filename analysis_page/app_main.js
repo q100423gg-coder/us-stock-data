@@ -137,7 +137,7 @@ async function boot() {
   $("#foot-asof").textContent = `가격 기준 ${last ? fmtD(last, "long") : "–"} 종가` + (DATA.uni.built ? ` · 데이터 갱신 ${DATA.uni.built}` : "");
   loadCal().then((c) => { DATA.calMap = c.tickers || {}; }).catch(() => { DATA.calMap = {}; });
   loadMacro().then((m) => {
-    const pick = (k) => { const s = m.series[k]; return s && s.obs.length ? { [s.name]: s.obs[s.obs.length - 1][1], 날짜: s.obs[s.obs.length - 1][0] } : null; };
+    const pick = (k) => { const s = m.series[k]; return s && s.obs.length ? { [s.name]: s.obs[s.obs.length - 1][1], 기준시점: mPeriodFull(s, s.obs[s.obs.length - 1][0]) } : null; };
     DATA.macroSnap = ["FFR", "UST10Y", "SP10_3M", "CPI", "CORE_PCE", "UNRATE", "VIX", "HY"].map(pick).filter(Boolean);
   }).catch(() => {});
   routeFromHash();

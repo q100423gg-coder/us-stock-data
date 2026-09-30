@@ -21,6 +21,63 @@ const monKo = (d) => +d.slice(5, 7) + "월";
 /** josa after a number read aloud: 0·3·6 (영·삼·육) end in a consonant -> "으로" */
 const ro = (numText) => (/[036]$/.test(numText) ? "으로" : "로");
 const qKo = (d) => `${d.slice(2, 4)}년 ${Math.floor((+d.slice(5, 7) - 1) / 3) + 1}분기`;
+
+/* When each series comes out. Weekdays are US time; the page picks new values up the next morning in Korea.
+   c overrides the cadence chip when the release cadence differs from the data frequency. */
+const MFREQ = { D: "매일", W: "매주", M: "매월", Q: "분기" };
+const MREL = {
+  FFR: { t: "값은 매일 기록되지만, 바뀌는 건 1년에 8번 열리는 FOMC 회의 때뿐이에요." },
+  UST2Y: { t: "매일 나와요. 연준 금리 통계(H.15)를 거쳐 하루 늦게 올라와요." },
+  UST10Y: { t: "매일 나와요. 연준 금리 통계(H.15)를 거쳐 하루 늦게 올라와요." },
+  SP10_2: { t: "매일 나와요. 재무부 금리 자료로 그날 바로 계산돼서 2년물·10년물 금리 카드보다 하루 빠를 때가 많아요." },
+  SP10_3M: { t: "매일 나와요. 재무부 금리 자료로 그날 바로 계산돼서 국채 금리 카드보다 하루 빠를 때가 많아요." },
+  MORT30: { t: "매주 목요일, 주택금융회사 프레디맥이 그 주 조사 결과를 발표해요." },
+  CPI: { t: "매월 10~15일쯤 노동통계국이 지난달 치를 발표해요." },
+  CORE_CPI: { t: "CPI와 같은 날, 매월 10~15일쯤 지난달 치가 발표돼요." },
+  CORE_PCE: { t: "매월 하순 경제분석국이 지난달 치를 발표해요. CPI보다 2주쯤 늦어서 CPI보다 한 달 전 값이 보일 때가 많아요." },
+  BEI5: { t: "매일 나와요. 국채 금리로 그날 바로 계산돼요." },
+  UNRATE: { t: "보통 매월 첫째 금요일, 노동통계국 고용보고서로 지난달 치가 발표돼요." },
+  NFP: { t: "보통 매월 첫째 금요일, 노동통계국 고용보고서로 지난달 치가 발표돼요." },
+  CLAIMS: { t: "매주 목요일, 지난주(토요일까지) 신청 건수가 발표돼요. 날짜는 그 주의 마지막 날이에요." },
+  SAHM: { t: "고용보고서의 실업률로 계산돼서 매월 고용보고서와 같은 날 바뀌어요." },
+  WAGE: { t: "보통 매월 첫째 금요일, 고용보고서와 함께 지난달 치가 발표돼요." },
+  GDP: { t: "분기가 끝나고 한 달쯤 뒤 첫 추정치가 나오고, 그 뒤 두 번 더 고쳐서 발표돼요. 2분기는 4~6월이에요." },
+  INDPRO: { t: "매월 중순 연준이 지난달 치를 발표해요." },
+  RETAIL: { t: "매월 중순 인구조사국이 지난달 치를 발표해요." },
+  HOUST: { t: "매월 중순이 지나서 인구조사국이 지난달 치를 발표해요." },
+  UMICH: { t: "미시간대가 매월 중순(예비치)과 하순(확정치)에 발표하지만, FRED에는 제공처 요청으로 한 달 늦게 올라와요." },
+  M2: { t: "매월 하순 연준이 지난달 치를 발표해요." },
+  FEDBS: { t: "매주 목요일 오후, 연준이 수요일 기준 규모를 발표해요." },
+  HY: { t: "매일 나와요. 장 마감 값이 하루 늦게 올라와요." },
+  IG: { t: "매일 나와요. 장 마감 값이 하루 늦게 올라와요." },
+  NFCI: { t: "매주 수요일, 시카고 연은이 지난주(금요일까지) 치를 발표해요." },
+  VIX: { t: "매일 나와요. 장 마감 값이 하루 늦게 올라와요." },
+  USD: { c: "매주", t: "값은 날마다 있지만, 연준이 매주 월요일에 지난주 치를 한꺼번에 발표해요." },
+  WTI: { c: "매주", t: "값은 날마다 있지만, 미국 에너지정보청(EIA)이 매주 수요일에 한꺼번에 올려요." },
+  SPX: { t: "매일 나와요. 장 마감 값이 하루 늦게 올라와요." },
+};
+const mCad = (key, s) => (MREL[key] && MREL[key].c) || MFREQ[s.freq] || "";
+/** the period a value covers: "9/28", "9/19 주간", "8월분", "2분기" (with the year when it isn't this year) */
+function mPeriod(s, d) {
+  if (!d) return "";
+  const m = +d.slice(5, 7), yy = +d.slice(0, 4) === new Date().getFullYear() ? "" : d.slice(2, 4) + "년 ";
+  if (s.freq === "M") return `${yy}${m}월분`;
+  if (s.freq === "Q") return `${yy}${Math.floor((m - 1) / 3) + 1}분기`;
+  return fmtD(d, "md") + (s.freq === "W" ? " 주간" : "");
+}
+const isoOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+/** the same with the full year, for the AI prompt and chart tooltips */
+function mPeriodFull(s, d) {
+  const y = d.slice(0, 4), m = +d.slice(5, 7);
+  if (s.freq === "M") return `${y}년 ${m}월`;
+  if (s.freq === "Q") return `${y}년 ${Math.floor((m - 1) / 3) + 1}분기`;
+  return fmtD(d) + (s.freq === "W" ? " 주간" : "");
+}
+/** "8월분" with the cadence chip in front */
+function mWhen(key, s, d) {
+  const p = mPeriod(s, d), c = mCad(key, s);
+  return h("span", { class: "dt", title: `${p} 값 · ${c === "분기" ? "분기마다" : c} 발표` }, c ? h("span", { class: "fq" }, c) : null, p);
+}
 /** "올랐어요" / "내렸어요" with the size of a change in %p */
 const moved = (d, nd = 2) => (Math.abs(d) < 0.5 * Math.pow(10, -nd) ? "변화가 없어요" : `${fmtN(Math.abs(d), nd)}%p ${d > 0 ? "올랐어요" : "내렸어요"}`);
 /** zone label -> "높은 수준" / "안정적인 수준" */
@@ -671,7 +728,7 @@ function macroMini(key, s, j) {
     h("span", { class: "nm" }, s.name),
     h("span", { class: "v" }, macroFmt(s, c.last && c.last[1]), h("small", null, s.unit)),
     spark(recent, "var(--s1)", 150, 30),
-    h("span", { class: "d" }, (c.last ? fmtD(c.last[0], s.freq === "M" || s.freq === "Q" ? "ym" : "md") : "") + (macroDelta(s, c.last, c.y1) ? " · 1년 " + macroDelta(s, c.last, c.y1) : "")),
+    h("span", { class: "d" }, (c.last ? mPeriod(s, c.last[0]) : "") + (macroDelta(s, c.last, c.y1) ? " · 1년 " + macroDelta(s, c.last, c.y1) : "")),
     j ? h("span", { class: "mst-row" }, mStatus(j.lv, MLV[j.lv].s), j.tag ? h("span", { class: "lvtag" }, j.tag) : null) : null);
 }
 /** one-line verdict for the home page */
@@ -681,7 +738,7 @@ function macroVerdict(rd) {
 
 // ---------------------------------------------------------------- the dashboard
 async function renderMacro() {
-  const wrap = viewShell("매크로 대시보드", "미국 연준 FRED 공식 통계 · 매일 아침 갱신");
+  const wrap = viewShell("매크로 대시보드", "미국 연준 FRED 공식 통계 · 화~토 아침 갱신");
   const body = h("div", { style: { display: "flex", flexDirection: "column", gap: "18px" } }, h("div", { class: "loading" }, "불러오는 중…"));
   wrap.append(body);
   let m;
@@ -737,7 +794,9 @@ async function renderMacro() {
     body.append(sec);
   }
   body.append(macroGlossary(m));
-  body.append(h("p", { class: "note" }, `FRED 수집 ${m.updated_at ? fmtD(m.updated_at.slice(0, 10)) : ""} · 월간 지표는 발표 시점에 한 달 이상 늦게 나와요. 카드를 누르면 긴 기간 차트와 자세한 설명이 열려요. 해석은 정해진 규칙으로 자동으로 만든 참고용이에요.`));
+  const upd = m.updated_at ? new Date(m.updated_at) : null;
+  const updText = upd && !isNaN(upd) ? `${upd.getMonth() + 1}/${upd.getDate()} ${String(upd.getHours()).padStart(2, "0")}:${String(upd.getMinutes()).padStart(2, "0")}` : "";
+  body.append(h("p", { class: "note" }, `${updText ? "FRED에서 " + updText + "에 받아온 값이에요. " : ""}카드 오른쪽 위에는 발표 주기(매일·매주·매월·분기)와 그 숫자가 어느 시점의 값인지(8월분, 2분기처럼)를 적었어요. 지표마다 발표 주기와 발표까지 걸리는 시간이 달라서 날짜가 서로 달라요. 발표 요일은 미국 시간 기준이고, 이 페이지에는 다음 날 아침(한국 시간) 갱신 때 반영돼요. 카드를 누르면 긴 기간 차트와 자세한 설명, 발표 일정이 열려요. 해석은 정해진 규칙으로 자동으로 만든 참고용이에요.`));
   if (MAC.open && m.series[MAC.open]) {
     const card = $(`.mc2[data-key="${MAC.open}"]`, body);
     if (card) { card.click(); setTimeout(() => card.scrollIntoView({ block: "center" }), 50); }
@@ -766,7 +825,7 @@ function macroCard(key, s, grid, j) {
   const c = macroChange(s), g = MG[key];
   const n = s.freq === "D" ? 504 : s.freq === "W" ? 104 : s.freq === "Q" ? 12 : 36;
   const btn = h("button", { type: "button", class: "mc2", "data-key": key, "aria-expanded": "false" },
-    h("div", { class: "hd" }, h("span", { class: "nm" }, s.name), h("span", { class: "dt" }, c.last ? fmtD(c.last[0], s.freq === "M" || s.freq === "Q" ? "ym" : "md") : "")),
+    h("div", { class: "hd" }, h("span", { class: "nm" }, s.name), c.last ? mWhen(key, s, c.last[0]) : null),
     h("div", { class: "row" }, h("span", { class: "v" }, macroFmt(s, c.last && c.last[1]), h("small", null, s.unit)), spark(s.obs.slice(-n).map((o) => o[1]), "var(--s1)", 110, 34)),
     h("span", { class: "chg" }, [c.m1 ? (s.freq === "Q" ? "직전 분기 " : "1개월 ") + (macroDelta(s, c.last, c.m1) || "–") : null, c.y1 ? "1년 " + (macroDelta(s, c.last, c.y1) || "–") : null].filter(Boolean).join(" · ")),
     j && g && g.zones && isNum(j.gauge) ? mGauge(g, j.gauge, s, j.lv) : null,
@@ -792,7 +851,8 @@ function macroCard(key, s, grid, j) {
       h("dt", null, g.hiL || "높으면"), h("dd", null, g.hi),
       h("dt", null, g.loL || "낮으면"), h("dd", null, g.lo),
       g.zones || g.rule ? [h("dt", null, "읽는 기준"), h("dd", null, [zoneLegend(g, s), g.rule].filter(Boolean).join(". ") + (g.rule && !/[.요]$/.test(g.rule) ? "." : ""))] : null,
-      j ? [h("dt", null, "지금은"), h("dd", null, mStatus(j.lv), " ", j.say)] : null) : null;
+      j ? [h("dt", null, "지금은"), h("dd", null, mStatus(j.lv), " ", j.say)] : null,
+      MREL[key] && c.last ? [h("dt", null, "발표 일정"), h("dd", null, `${mPeriod(s, c.last[0])} 값이 최신이에요. ${MREL[key].t}`)] : null) : null;
     det.append(h("div", { class: "ctools" }, h("b", null, s.name + " (" + s.unit + ")"), seg), box, guide,
       h("p", { class: "note" }, h("a", { href: "https://fred.stlouisfed.org/series/" + s.id, target: "_blank", rel: "noopener" }, "출처: FRED " + s.id + " ↗")));
     const draw = () => {
@@ -802,7 +862,7 @@ function macroCard(key, s, grid, j) {
       const zero = /%p$/.test(s.unit) || s.unit === "천 명" || key === "NFCI" || key === "SAHM";
       lineChart(box, { height: 240, label: s.name, series: [{ name: s.name, color: "var(--s1)", x: pts.map((o) => pd(o[0]).getTime()), y: pts.map((o) => o[1]), area: !zero, fmt: (v) => macroFmt(s, v) + " " + s.unit }],
         yFmt: (v) => macroFmt(s, v), refs: zero ? [{ y: key === "SAHM" ? 0.5 : 0, label: key === "SAHM" ? "침체 신호 0.5" : "" }] : [],
-        tipTitle: (t) => fmtD(new Date(t), s.freq === "M" || s.freq === "Q" ? "ym" : null), endLabel: true });
+        tipTitle: (t) => mPeriodFull(s, isoOf(new Date(t))), endLabel: true });
     };
     ["1Y", "3Y", "5Y", "10Y", "전체"].forEach((r) => {
       const b = h("button", { type: "button", "aria-pressed": String(MAC.range === r) }, r);
@@ -835,7 +895,7 @@ async function macroBrief(m, rd, out, btn, status) {
     const c = macroChange(s);
     if (!c.last) continue;
     const j = rd.items[k];
-    snap[s.name] = { 최신: c.last[1], 날짜: c.last[0], 단위: s.unit, "직전 비교치(1개월·직전 분기 전)": c.m1 ? c.m1[1] : null, "1년 전": c.y1 ? c.y1[1] : null,
+    snap[s.name] = { 최신: c.last[1], 기준시점: mPeriodFull(s, c.last[0]), 발표주기: mCad(k, s), 단위: s.unit, "직전 비교치(1개월·직전 분기 전)": c.m1 ? c.m1[1] : null, "1년 전": c.y1 ? c.y1[1] : null,
       규칙해석: j ? `${MLV[j.lv].t}${j.tag ? " · " + j.tag : ""} — ${j.say}` : null };
   }
   const prompt = "당신은 미국 매크로 이코노미스트예요. 아래 미국 경제 지표 최신값(FRED)만 근거로, 미국 주식에 투자하는 한국 개인 투자자를 위한 매크로 브리핑을 한국어로 써 주세요. 경제 용어는 처음 나올 때 괄호로 쉽게 풀어 주세요.\n" +
