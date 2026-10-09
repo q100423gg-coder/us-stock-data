@@ -6,6 +6,7 @@ Universe (rebuilt on every run):
     that zyhe16/top-us-stock-tickers mirrors every weekday
   * every current S&P 500 member (datasets/s-and-p-500-companies), whatever its size
   * the index and sector ETFs the page shows (ETFS)
+  * the ETFs of the page's ETF list, etf_tickers.txt ("TICKER | category | Korean name" per line)
   * anything listed in extra_tickers.txt (one symbol per line, # comments allowed)
 
 Output (out/):
@@ -61,6 +62,23 @@ def clean_name(s):
     return s.strip(" ,")
 
 
+def load_etf_list():
+    """etf_tickers.txt -> [(ticker, category, Korean name)]; the category goes into universe.csv's sector column."""
+    f = HERE / "etf_tickers.txt"
+    out, seen = [], set()
+    if f.exists():
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            ln = ln.split("#")[0].strip()
+            if not ln:
+                continue
+            p = [x.strip() for x in ln.split("|")]
+            t = norm(p[0])
+            if t and t not in seen:
+                seen.add(t)
+                out.append((t, p[1] if len(p) > 1 and p[1] else None, p[2] if len(p) > 2 and p[2] else t))
+    return out
+
+
 def build_universe():
     t = pd.read_csv(TICKERS_CSV)
     t["ticker"] = t["symbol"].map(norm)
@@ -94,6 +112,12 @@ def build_universe():
             have.add(x)
     for e in ETFS:
         rows.append(dict(ticker=e, name=e, sector=None, industry="ETF", market_cap=None, country="United States", sp500=0, etf=1))
+        have.add(e)
+    for e, cat, nm in load_etf_list():                         # the page's ETF list
+        if e not in have:
+            rows.append(dict(ticker=e, name=nm, sector=cat, industry="ETF", market_cap=None, country="United States",
+                             sp500=0, etf=1))
+            have.add(e)
     return pd.DataFrame(rows).drop_duplicates("ticker")
 
 
