@@ -10,6 +10,7 @@ on:
     paths:
       - "fetch.py"
       - "extra_tickers.txt"
+      - "etf_tickers.txt"
       - ".github/workflows/nightly-prices.yml"
 
 permissions:
