@@ -1,12 +1,14 @@
 {
- "updated_at": "2026-10-09T22:39:01Z",
+ "updated_at": "2026-10-09T23:55:07Z",
  "asof": "2026-10-09",
- "tickers": 2040,
- "rows": 1089140,
- "universe": 2040,
+ "tickers": 2318,
+ "rows": 1242318,
+ "universe": 2319,
  "min_cap": 2000000000.0,
  "start": "2024-07-31",
- "failed": 0,
+ "failed": 1,
  "kept_from_previous": 0,
- "failed_tickers": []
+ "failed_tickers": [
+  "SPLG"
+ ]
 }
