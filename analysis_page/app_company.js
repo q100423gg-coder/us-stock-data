@@ -1070,7 +1070,8 @@ const SW_KO = { realestate: "부동산", consumer_cyclical: "경기소비재", b
 const HKIND = { B: "채권", C: "현금성", F: "펀드", S: "스왑", U: "선물", O: "옵션", X: "기타" };
 const HSRC = { vanguard: ["뱅가드", "매월 말 기준 · 약 한 달 뒤 공개"], ssga: ["스테이트 스트리트(SPDR)", "매일 갱신"], proshares: ["프로셰어즈", "매일 갱신"],
   direxion: ["디렉시온", "매일 갱신"], globalx: ["글로벌X", "매일 갱신"], vaneck: ["반에크", "매일 갱신"], ark: ["ARK", "매일 갱신"],
-  jpm: ["JP모건", "매일 갱신"], firsttrust: ["퍼스트 트러스트", "매일 갱신"], nport: ["SEC 공시(N-PORT)", "분기 말 기준 · 약 두 달 뒤 공개"] };
+  jpm: ["JP모건", "매일 갱신"], firsttrust: ["퍼스트 트러스트", "매일 갱신"], roundhill: ["라운드힐", "매일 갱신"],
+  amplify: ["앰플리파이", "매일 갱신"], nport: ["SEC 공시(N-PORT)", "분기 말 기준 · 약 두 달 뒤 공개"] };
 /** one holding [name, ticker, weight %, kind, exposure %] -> the name cell */
 function holdName(x) {
   const tk = x[1] || "", kind = x[3] || "";
@@ -1105,7 +1106,9 @@ function secHoldings(R) {
   const yh = !own && etf.hold && etf.hold.length
     ? etf.hold.map((x) => [x[1] || x[0] || "", ySym(x[0]), isNum(x[2]) ? x[2] * 100 : null]) : null;
   const top = own || yh;
-  const hasSw = !!(etf.sw && etf.sw.some((x) => x[1] > 0));
+  // Yahoo's sector split means nothing for a fund of futures, cash and bills (BWET): skip it when the issuer's list says so
+  const noEquity = !!(own && own.every((x) => ["C", "B", "U"].includes(x[3])));
+  const hasSw = !noEquity && !!(etf.sw && etf.sw.some((x) => x[1] > 0));
   const sec = h("section", { class: "panel sec", id: "s-hold" },
     secHead("보유 종목", ix ? `전체 ${fmtN(ix[1])}개 · ${src[0]} ${fmtD(ix[3])} 기준`
       : [top ? `상위 ${fmtN(Math.min(top.length, 10))}개` : "", hasSw ? "섹터 비중" : ""].filter(Boolean).join(" · ")));

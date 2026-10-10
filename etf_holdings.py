@@ -19,6 +19,8 @@ Sources (every holding of the fund; daily except Vanguard, which publishes month
   ark         assets.ark-funds.com/fund-documents/funds-etf-csv/{file}.csv
   jpm         am.jpmorgan.com/FundsMarketingHandler/excel (by CUSIP)   xlsx
   firsttrust  www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker={T}   html table
+  roundhill   www.roundhillinvestments.com/assets/data/FilepointRoundhill.40RU.RU_Holdings_{MMDDYYYY}.csv   one csv for
+              every Roundhill fund (REX's RAM: assets/data/rex_data/REX_RAM_Holdings_{YYYYMMDD}.csv)
   nport       every other ETF (iShares, Invesco, Schwab ... refuse automated downloads): the fund's latest Form N-PORT
               filing at the SEC (www.sec.gov, quarter-end holdings made public about 60 days later). SEC asks automated
               clients to name a contact in the User-Agent: the SEC_CONTACT secret; without it this source is skipped.
@@ -61,7 +63,9 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
 FAMILY = {"Vanguard": "vanguard", "State Street Investment Management": "ssga", "SPDR State Street Global Advisors": "ssga",
           "State Street Global Advisors": "ssga", "ProShares": "proshares", "Direxion Funds": "direxion",
           "Direxion": "direxion", "Global X Funds": "globalx", "Global X": "globalx", "VanEck": "vaneck",
-          "ARK ETF Trust": "ark", "JPMorgan": "jpm", "First Trust": "firsttrust"}
+          "ARK ETF Trust": "ark", "JPMorgan": "jpm", "First Trust": "firsttrust",
+          "Roundhill Investments": "roundhill", "Roundhill Financial": "roundhill", "Amplify ETFs": "amplify"}
+BY_TICKER = {"RAM": "roundhill"}               # REX's 2x DRAM fund: its daily file is on Roundhill's site
 VANECK = {"SMH": "semiconductor-etf-smh", "OIH": "oil-services-etf-oih", "ESPO": "video-gaming-esports-etf-espo",
           "NLR": "uranium-nuclear-energy-etf-nlr", "GDX": "gold-miners-etf-gdx", "GDXJ": "junior-gold-miners-etf-gdxj",
           "REMX": "rare-earth-strategic-metals-etf-remx", "MOO": "agribusiness-etf-moo", "VNM": "vietnam-etf-vnm"}
@@ -460,6 +464,73 @@ def parse_jpm(content):
     return asof, finish(rows)
 
 
+OCC = re.compile(r"^[A-Z0-9]{1,6}\s+\d{6}[CP]\d{8}$")              # listed option symbol: ROOT YYMMDD C/P strike
+
+
+def filepoint_rows(items, asof):
+    """holdings in the fund administrators' 'Filepoint' fields (StockTicker, CUSIP, SecurityName, Weightings in %,
+    MoneyMarketFlag ...). Swaps and freight futures carry their notional in Weightings: that is their exposure."""
+    rows = []
+    for d in items:
+        name = str(d.get("SecurityName") or d.get("Name") or "").strip()
+        tk, cus = str(d.get("StockTicker") or "").strip(), str(d.get("CUSIP") or d.get("Cusip") or "").strip()
+        w = d.get("Weightings")
+        if not name and not tk:
+            continue
+        mmf = d.get("MoneyMarketFlag", d.get("money_market_flag"))
+        ht = str(d.get("holding_type") or "").lower()                    # Amplify's feed labels some rows itself
+        if OCC.match(tk.upper()) or re.search(r"\d{2}/\d{2}/\d{4}\s+[\d.]+\s+[CP]$", name) or ht == "option":
+            k, tk = "O", ""
+        elif (mmf is True or str(mmf or "").strip().upper() in ("Y", "TRUE") or tk.upper().startswith("CASH")
+              or ht in ("money_market", "cash")):
+            k = "C"
+        elif ht == "swap":
+            k = "S"
+        elif re.search(r"\bFFA\b|\bFREIGHT\b", name, re.I):            # forward freight agreements (BWET, BDRY)
+            k = "U"
+        elif re.search(r"\bETF\b", name, re.I):          # "Roundhill Weekly T-Bill ETF" is a fund, not a bill
+            k = "F"
+        else:
+            k = kind_of(name)
+        if k in ("S", "U"):
+            under = re.match(r"([0-9A-Z]{9})\b", tk.upper())             # "595112103 TRS 050427 NM": the CUSIP swapped
+            sym = CUSIPS.get(under.group(1), "") if under else ""
+            if not sym:
+                m = re.fullmatch(r"([A-Z]{1,5}) SWAP", name.upper())     # "DRAM SWAP"
+                sym = m.group(1) if m else ""
+            rows.append(mk(name, sym, None, k, w))
+            continue
+        if not k:
+            see_cusip(cus, tk)
+        rows.append(mk(name, tick(tk), w, k))
+    if not rows:
+        raise Unavailable("no rows")
+    return asof, finish(rows)
+
+
+def parse_filepoint(text, fund, asof):
+    """daily holdings file in the 'Filepoint' layout, one file for a family of funds (Date, Account, StockTicker,
+    CUSIP, SecurityName, Shares, Price, MarketValue, Weightings, NetAssets, ..., MoneyMarketFlag). Its Date is the
+    next session's (the basket the fund opens with); asof is the file's own date, the close it was valued at."""
+    items = []
+    for d in csv.DictReader(io.StringIO(text.lstrip("﻿"))):
+        if (d.get("Account") or "").strip().upper() == fund:
+            items.append(dict(d, Weightings=num(d.get("Weightings"))))
+    if not items:
+        raise Unavailable(f"{fund} not in the file")
+    return filepoint_rows(items, asof)
+
+
+def parse_amplify(items, asof):
+    """Amplify's data feed: Filepoint fields, Weightings as '25.30%' or a number (a fraction when they add up to ~1)"""
+    raw = [d.get("Weightings", d.get("Weighting", d.get("Weight", d.get("weight")))) for d in items]
+    vals = [num(x) for x in raw]
+    pct = any(isinstance(x, str) and x.strip().endswith("%") for x in raw)
+    frac = not pct and 0 < sum(abs(v) for v in vals if v is not None) < 3
+    out = [dict(d, Weightings=None if v is None else (v * 100 if frac else v)) for d, v in zip(items, vals)]
+    return filepoint_rows(out, asof)
+
+
 def parse_firsttrust(text):
     m = re.search(r"Holdings of the Fund as of\s*([\d/]+)", text)
     asof = iso_date(m.group(1)) if m else None
@@ -549,6 +620,90 @@ def src_jpm(t):
 def src_firsttrust(t):
     r = fetch(f"https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker={t}", "text/html,*/*;q=0.8")
     return parse_firsttrust(r.text)
+
+
+RH_FILES = {}          # url pattern -> (as of, text): one file serves every Roundhill fund
+
+
+def src_roundhill(t):
+    """the daily file behind roundhillinvestments.com's holdings tables (all Roundhill funds in one file);
+    REX's RAM, which Roundhill's site also carries, has a file of its own. A missing day is a 200 'Page Not Found'."""
+    base = "https://www.roundhillinvestments.com/assets/data/"
+    pat = base + ("rex_data/REX_RAM_Holdings_{d:%Y%m%d}.csv" if t == "RAM" else "FilepointRoundhill.40RU.RU_Holdings_{d:%m%d%Y}.csv")
+    if pat not in RH_FILES:
+        RH_FILES[pat] = None
+        d = datetime.now(timezone(timedelta(hours=-4))).date()       # New York's date, give or take an hour
+        for _ in range(10):
+            if d.weekday() < 5:
+                try:
+                    r = fetch(pat.format(d=d), "text/csv,*/*", tries=1)
+                    if not is_html(r.content) and b"Account" in r.content[:400]:
+                        RH_FILES[pat] = (d.isoformat(), r.content.decode("utf-8-sig", "replace"))
+                        break
+                except Unavailable:
+                    pass
+            d -= timedelta(days=1)
+    if not RH_FILES[pat]:
+        raise Unavailable("no file in the last two weeks")
+    asof, text = RH_FILES[pat]
+    return parse_filepoint(text, t, asof)
+
+
+AMP = {}               # amplifyetfs.com's public data-feed settings, read from the site's own script
+
+
+def fs_value(v):
+    """a Firestore REST value -> plain Python"""
+    if not isinstance(v, dict):
+        return v
+    for k in ("stringValue", "booleanValue", "timestampValue"):
+        if k in v:
+            return v[k]
+    if "integerValue" in v:
+        return int(v["integerValue"])
+    if "doubleValue" in v:
+        return float(v["doubleValue"])
+    if "mapValue" in v:
+        return {k: fs_value(x) for k, x in (v["mapValue"].get("fields") or {}).items()}
+    if "arrayValue" in v:
+        return [fs_value(x) for x in (v["arrayValue"].get("values") or [])]
+    return None
+
+
+def src_amplify(t):
+    """amplifyetfs.com draws its holdings tables from a public Firestore feed (funds/{T}/holdings/{date}); the
+    newest date's document carries the holdings, or a subcollection of them does"""
+    if "key" not in AMP:
+        AMP["key"] = None
+        js = fetch("https://amplifyetfs.com/wp-content/plugins/amplify-data/js/amplify-firestore.js").text
+        k, p = re.search(r'apiKey:\s*"([^"]+)"', js), re.search(r'projectId:\s*"([^"]+)"', js)
+        if k and p:
+            AMP.update(key=k.group(1), proj=p.group(1))
+    if not AMP.get("key"):
+        raise Unavailable("no data-feed settings on the site")
+    base = f"https://firestore.googleapis.com/v1/projects/{AMP['proj']}/databases/(default)/documents/funds/{t}/holdings"
+    docs = fetch(f"{base}?pageSize=1&orderBy=__name__%20desc&key={AMP['key']}", "application/json").json().get("documents") or []
+    if not docs:
+        raise Unavailable("no holdings in the feed")
+    day = docs[0]["name"].rsplit("/", 1)[1]
+    items = fs_value({"mapValue": {"fields": docs[0].get("fields") or {}}}).get("holdings")
+    if not isinstance(items, list):
+        items, tok = [], ""
+        for _ in range(20):
+            j = fetch(f"{base}/{day}/holdings?pageSize=300&key={AMP['key']}" + (f"&pageToken={tok}" if tok else ""),
+                      "application/json").json()
+            items += [fs_value({"mapValue": {"fields": x.get("fields") or {}}}) for x in j.get("documents") or []]
+            tok = j.get("nextPageToken")
+            if not tok:
+                break
+    asof = iso_date(day) or (f"{day[:4]}-{day[4:6]}-{day[6:8]}" if re.fullmatch(r"\d{8}", day) else None)
+    ny = datetime.now(timezone(timedelta(hours=-4))).date()
+    if asof and asof > ny.isoformat():        # dated with the next session's basket: show the close it was valued at
+        d = ny
+        while d.weekday() > 4:
+            d -= timedelta(days=1)
+        asof = d.isoformat()
+    return parse_amplify(items, asof)
 
 
 # ----------------------------------------------------------------------------------------------- SEC N-PORT
@@ -797,7 +952,8 @@ def src_nport(t, old):
 
 
 SOURCES = {"vanguard": src_vanguard, "ssga": src_ssga, "proshares": src_proshares, "direxion": src_direxion,
-           "globalx": src_globalx, "vaneck": src_vaneck, "ark": src_ark, "jpm": src_jpm, "firsttrust": src_firsttrust}
+           "globalx": src_globalx, "vaneck": src_vaneck, "ark": src_ark, "jpm": src_jpm, "firsttrust": src_firsttrust,
+           "roundhill": src_roundhill, "amplify": src_amplify}
 
 
 # ----------------------------------------------------------------------------------------------- run
@@ -847,7 +1003,7 @@ def load_prev():
 def source_of(t, fam):
     if t in NO_LIST:
         return None
-    src = FAMILY.get(fam or "")
+    src = BY_TICKER.get(t) or FAMILY.get(fam or "")
     if src == "vaneck" and t not in VANECK or src == "ark" and t not in ARK or src == "jpm" and t not in JPM:
         src = None
     if not src and SEC_IDS and t in SEC_IDS and t not in NO_NPORT:
@@ -891,7 +1047,7 @@ def main():
         if only:
             due = t in only
         if not due or time.time() - t0 > BUDGET:
-            if old and old.get("src") == src:
+            if old:                           # (a source switch not reached today keeps the old source's list)
                 store[t] = old
                 bs["kept"] += 1
                 STATUS["kept"] += 1
@@ -921,7 +1077,7 @@ def main():
             print(f"{t:6s} {src:10s} FAILED {msg}", flush=True)
             if not isinstance(e, Unavailable):
                 traceback.print_exc()
-            if old and old.get("src") == src:
+            if old:                           # the last good list, whichever source gave it
                 store[t] = old
     # tickers for N-PORT holdings: the issuers' CUSIPs first, then OpenFIGI for the biggest unknown US holdings
     for v in store.values():
