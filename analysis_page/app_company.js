@@ -1211,10 +1211,11 @@ function fillFull(box, H) {
   more.addEventListener("click", () => draw(false));
   const src = HSRC[H.src] || [H.src, ""];
   const deriv = cnt.S || cnt.U || cnt.O;
-  box.append(sum, rows.length > 15 ? h("div", { class: "hbar" }, q, info) : null, tw, h("div", { class: "hbar" }, more),
+  // (a short list has no filter box: DOM append() would print a null as the word "null")
+  box.append(...[sum, rows.length > 15 ? h("div", { class: "hbar" }, q, info) : null, tw, h("div", { class: "hbar" }, more),
     h("p", { class: "note" }, `출처: ${src[0]} · ${fmtD(H.d)} 기준 전체 보유종목(${src[1]}). 비중은 펀드 순자산 대비예요.` +
       (H.src === "nport" ? " 공시 시점 뒤에 바뀐 종목과 비중은 반영되지 않아요." : "") +
       (deriv ? " 스왑·선물은 시가가 계약 손익뿐이라 비중 대신 따라가는 규모(노출)를 보여줘요. 레버리지·인버스 ETF는 주식 비중과 파생 노출을 더하면 목표 배수 근처가 돼요." : "") +
-      " 표에서 종목을 누르면 그 종목 분석으로 이동해요."));
+      " 표에서 종목을 누르면 그 종목 분석으로 이동해요.")].filter(Boolean));
   draw(true);
 }
