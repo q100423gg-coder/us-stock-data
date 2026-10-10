@@ -16,10 +16,14 @@ on:
       force:
         description: "Parts to refresh for every ticker now: qs, full, news (comma-separated)"
         default: ""
+      holdings_only:
+        description: "Space-separated ETFs whose holdings to refetch now (empty = every ETF that is due)"
+        default: ""
   push:
     branches: [main]
     paths:
       - "fundamentals.py"
+      - "etf_holdings.py"
       - ".github/workflows/fundamentals.yml"
 
 permissions:
@@ -41,17 +45,23 @@ jobs:
           python-version: "3.12"
 
       - name: Install
-        run: pip install --quiet --upgrade yfinance pandas pyarrow requests
+        run: pip install --quiet --upgrade yfinance pandas pyarrow requests openpyxl
 
       - name: Previous data (store, universe, prices, macro, earnings calendar)
         run: |
           mkdir -p prev
-          for f in fund_store.json.gz universe.csv prices.parquet macro.json earnings_calendar.json; do
+          for f in fund_store.json.gz universe.csv prices.parquet macro.json earnings_calendar.json etf_holdings.json.gz; do
             gh release download data --pattern "$f" --dir prev --clobber || echo "no $f yet"
           done
           ls -la prev
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: ETF holdings from the issuers' files
+        run: timeout 1200 python etf_holdings.py $HOLD_ONLY || echo "::warning::ETF holdings step failed; the bundle uses the last copy"
+        env:
+          HOLD_BUDGET_SEC: "900"
+          HOLD_ONLY: ${{ github.event.inputs.holdings_only || '' }}
 
       - name: Fetch company data and build the page bundle
         run: timeout 2700 python fundamentals.py all
@@ -63,7 +73,7 @@ jobs:
       - name: Publish release assets
         if: always()
         run: |
-          for f in out/fund_store.json.gz out/analysis_bundle.tar.gz out/fund_status.json; do
+          for f in out/fund_store.json.gz out/analysis_bundle.tar.gz out/fund_status.json out/etf_holdings.json.gz out/etf_holdings_status.json; do
             if [ -s "$f" ]; then gh release upload data "$f" --clobber; fi
           done
         env:

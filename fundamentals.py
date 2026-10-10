@@ -14,6 +14,8 @@ Phase 1 — fetch (Yahoo Finance, through yfinance's cookie/crumb session):
 Phase 2 — bundle: store + prices.parquet + macro.json + earnings_calendar.json -> analysis_bundle.tar.gz
   data/universe.json   one row per ticker (search, screener, peers) + trading dates + benchmark closes
   data/f/NN.json       NSHARDS shards: the full company record + daily closes, keyed by ticker
+  data/h/NN.json       HOLD_SHARDS shards: every holding of the ETFs that etf_holdings.py could read, keyed by ticker
+                       (universe.json "hold" says which shard; an ETF's record carries its top 10 as etf.top)
   data/macro.json      copied from macro.py's output
   data/calendar.json   upcoming earnings for universe tickers (Nasdaq calendar, Yahoo as fallback)
   data/meta.json       build time, price date, coverage
@@ -43,6 +45,8 @@ PREV = HERE / "prev"                      # release assets downloaded by the wor
 OUT = HERE / "out"
 STORE = "fund_store.json.gz"
 NSHARDS = 64
+HOLD_STORE = "etf_holdings.json.gz"       # etf_holdings.py: complete ETF holdings from the issuers' files
+HOLD_SHARDS = 16
 BUDGET = int(os.environ.get("FUND_BUDGET_SEC", "1500"))       # fetch phase, seconds
 THREADS = int(os.environ.get("FUND_THREADS", "3"))    # overlap latency; FUND_RPS sets the pace
 FRESH_H = float(os.environ.get("FUND_FRESH_HOURS", "18"))      # records younger than this are not refetched
@@ -917,6 +921,28 @@ def fetch_fx(currencies):
     return out
 
 
+def load_holdings():
+    """{ETF: {"src", "d", "n", "r"}} from this run's etf_holdings.py output, else the release's copy"""
+    for p in (OUT / HOLD_STORE, PREV / HOLD_STORE):
+        if p.exists():
+            try:
+                return json.loads(gzip.decompress(p.read_bytes())).get("etfs", {}) or {}
+            except Exception as e:
+                print(f"{p}: {type(e).__name__}: {e}", flush=True)
+    return {}
+
+
+def holding_ticker(tk, uni_set):
+    """issuers write BRK.B, BRK/B or BRK B; the page uses BRK-B"""
+    t = (tk or "").strip().upper()
+    if not t:
+        return ""
+    for c in (t, t.replace(".", "-"), t.replace("/", "-"), t.replace(" ", "-")):
+        if c in uni_set:
+            return c
+    return t
+
+
 BUNDLE_DROP = {"ih", "vc", "at_qs", "at_full", "at_news"}          # kept in the store, not shown on the page
 FS_DROP = {"nebitda", "beps", "nic", "tbv", "ic"}
 
@@ -932,6 +958,9 @@ def phase_bundle(universe, store, calendar):
     # reporting currencies of foreign filers, plus KRW for the page's won amounts
     fx_rates = fetch_fx(({((r.get("p") or {}).get("fcur") or "USD").upper() for r in store["tickers"].values()} - {"USD"}) | {"KRW"})
     cols, shards = {}, [dict() for _ in range(NSHARDS)]
+    holdings = load_holdings()
+    uni_set = {u["ticker"] for u in universe}
+    hpack = {}
     for urow in universe:
         t = urow["ticker"]
         rec = store["tickers"].get(t)
@@ -945,6 +974,12 @@ def phase_bundle(universe, store, calendar):
                           for per, tbl in full["fs"].items()}
         if px:
             full["px"] = {"i0": di[px[0][0]], "c": delta_cents(px[1])}
+        H = holdings.get(t) if row["q"] == "ETF" else None
+        if H and H.get("r"):
+            rows = [[x[0], holding_ticker(x[1], uni_set)] + list(x[2:]) for x in H["r"]]
+            full["etf"] = dict(full.get("etf") or {})
+            full["etf"]["top"] = rows[:10]
+            hpack[t] = {"src": H.get("src"), "d": H.get("d"), "r": rows}
         shards[row["sh"]][t] = full
     n = len(cols["t"])
     bench = {}
@@ -952,8 +987,23 @@ def phase_bundle(universe, store, calendar):
         if b in prices:
             bench[b] = {"i0": di[prices[b][0][0]], "c": delta_cents(prices[b][1])}
     krw, krw_at = FX_QUOTE.get("KRW", (None, None))
+    # complete ETF holdings: shards balanced by size (a bond fund can hold 10,000 lines)
+    (site / "data" / "h").mkdir(parents=True, exist_ok=True)
+    hsh, hsz, hold_ix = [dict() for _ in range(HOLD_SHARDS)], [0] * HOLD_SHARDS, {}
+    for t, H in sorted(hpack.items(), key=lambda kv: -len(json.dumps(kv[1], separators=(",", ":"), ensure_ascii=False))):
+        size = len(json.dumps(H, separators=(",", ":"), ensure_ascii=False))
+        i = min(range(HOLD_SHARDS), key=lambda k: hsz[k])
+        hsh[i][t] = H
+        hsz[i] += size
+        hold_ix[t] = [i, len(H["r"]), H["src"], H["d"]]
+    hbytes = []
+    for i, sh in enumerate(hsh):
+        s = json.dumps(sh, separators=(",", ":"), ensure_ascii=False).replace("\ufffd", "?")
+        (site / "data" / "h" / f"{i:02d}.json").write_text(s, encoding="utf-8")
+        hbytes.append(len(s))
     uni = {"v": 1, "dates": dates, "sectors": [[s, SECTOR_KO[s]] for s in SECTORS], "bench": bench, "cols": cols, "n": n,
-           "krw": round(krw, 2) if krw else None, "krw_at": krw_at}            # won per dollar and the quote's time
+           "krw": round(krw, 2) if krw else None, "krw_at": krw_at,            # won per dollar and the quote's time
+           "hold": hold_ix}                                                   # ETF -> [shard, holdings, source, as of]
     (site / "data" / "universe.json").write_text(json.dumps(uni, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
     sizes = []
     for i, sh in enumerate(shards):
@@ -982,7 +1032,9 @@ def phase_bundle(universe, store, calendar):
     meta = {"built_at": now_utc().strftime("%Y-%m-%dT%H:%M:%SZ"), "prices_asof": dates[-1] if dates else None,
             "tickers": n, "with_fundamentals": have, "oldest_record": ats[0] if ats else None,
             "newest_record": ats[-1] if ats else None, "shards": NSHARDS, "shard_bytes_max": max(sizes),
-            "shard_bytes_total": sum(sizes), "macro": macro_src.exists(), "calendar": len(cal), "fetch": STATUS}
+            "shard_bytes_total": sum(sizes), "macro": macro_src.exists(), "calendar": len(cal), "fetch": STATUS,
+            "holdings": {"etfs": len(hold_ix), "rows": sum(v[1] for v in hold_ix.values()), "shards": HOLD_SHARDS,
+                         "bytes_max": max(hbytes) if hbytes else 0, "bytes_total": sum(hbytes)}}
     (site / "data" / "meta.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False), encoding="utf-8")
     with tarfile.open(OUT / "analysis_bundle.tar.gz", "w:gz") as tar:
         tar.add(site / "data", arcname="data")
