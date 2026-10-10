@@ -1100,11 +1100,15 @@ function secHoldings(R) {
   const src = ix ? HSRC[ix[2]] || [ix[2], ""] : null;
   // the top 10: the full list's own (issuers' files), else Yahoo's (kept for SEC filings, which are a quarter old)
   const own = ix && etf.top && etf.top.length ? etf.top : null;
+  // Yahoo symbols: BRK.B -> BRK-B when that is one of ours; foreign listings (005930.KS) keep their own form
+  const ySym = (s) => { const d = (s || "").replace(".", "-"); return row(d) ? d : s || ""; };
   const yh = !own && etf.hold && etf.hold.length
-    ? etf.hold.map((x) => [x[1] || x[0] || "", (x[0] || "").replace(".", "-"), isNum(x[2]) ? x[2] * 100 : null]) : null;
+    ? etf.hold.map((x) => [x[1] || x[0] || "", ySym(x[0]), isNum(x[2]) ? x[2] * 100 : null]) : null;
   const top = own || yh;
+  const hasSw = !!(etf.sw && etf.sw.some((x) => x[1] > 0));
   const sec = h("section", { class: "panel sec", id: "s-hold" },
-    secHead("보유 종목", ix ? `전체 ${fmtN(ix[1])}개 · ${src[0]} ${fmtD(ix[3])} 기준` : "상위 10개 · 섹터 비중"));
+    secHead("보유 종목", ix ? `전체 ${fmtN(ix[1])}개 · ${src[0]} ${fmtD(ix[3])} 기준`
+      : [top ? `상위 ${fmtN(Math.min(top.length, 10))}개` : "", hasSw ? "섹터 비중" : ""].filter(Boolean).join(" · ")));
   const grid = h("div", { class: "grid2" });
   const left = h("div", { class: "hcol" });
   const topBox = top ? h("div", { class: "tw" }, h("table", { class: "t hlist" },
@@ -1112,7 +1116,7 @@ function secHoldings(R) {
     h("tbody", null, top.map((x) => holdRow(x, null))))) : null;
   const srcNote = own ? `${src[0]} 공시 보유종목 · ${src[1]}`
     : ix ? `위 상위 10개는 야후 파이낸스 최신 자료이고, 전체 목록은 ${src[0]} ${fmtD(ix[3])} 기준이에요(${src[1]}).`
-    : "상위 10개는 야후 파이낸스 자료예요. 이 ETF는 운용사의 전체 보유종목 파일을 자동으로 받을 수 없어 전체 목록은 아직 없어요.";
+    : "상위 종목은 야후 파이낸스 자료예요. 이 ETF는 운용사 보유종목 파일이나 SEC 공시를 아직 자동으로 받을 수 없어 전체 목록은 없어요.";
   if (ix) {
     const label = () => (!top || ix[1] > top.length ? `전체 ${fmtN(ix[1])}개 보기` : "보유 종목 표로 보기");
     const fullBox = h("div", { class: "hfull", id: "hfull", hidden: true });
@@ -1146,7 +1150,7 @@ function secHoldings(R) {
     left.append(topBox, h("p", { class: "note" }, srcNote));
   }
   if (left.childNodes.length) grid.append(left);
-  if (etf.sw && etf.sw.length) {
+  if (hasSw) {
     const sw = etf.sw.filter((x) => x[1] > 0).sort((a, b) => b[1] - a[1]);
     const box = h("div", { class: "chart" });
     grid.append(h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 } }, h("h3", { class: "sub-h" }, "섹터 비중"), box,
@@ -1156,8 +1160,12 @@ function secHoldings(R) {
   }
   if (grid.childNodes.length === 1) grid.style.gridTemplateColumns = "minmax(0,1fr)";
   if (!grid.childNodes.length) clear(sec).append(secHead("보유 종목", ""));
-  sec.append(grid.childNodes.length ? grid : h("p", { class: "empty" },
-    "보유 종목 데이터가 없어요. 금·은·비트코인 현물 ETF처럼 실물을 직접 보관하거나 선물로 운용하는 상품은 종목 목록이 없어요."));
+  // physical metal / crypto trusts and futures pools hold no securities; anything else simply has no source yet
+  const pool = /bitcoin|ethereum|\bether\b|crypto|\bgold\b|silver|platinum|palladium|copper|\boil\b|natural gas|commodit|agricultur|futures|\bvix\b|\btrust\b|, lp\b/i
+    .test((row(sym) || {}).n || "");
+  sec.append(grid.childNodes.length ? grid : h("p", { class: "empty" }, pool
+    ? "보유 종목 데이터가 없어요. 금·은·비트코인 현물 ETF처럼 실물을 직접 보관하거나 선물로 운용하는 상품은 종목 목록이 없어요."
+    : "보유 종목 데이터가 아직 없어요. 운용사 보유종목 파일이나 SEC 공시에서 받을 수 있게 되면 매일 밤 수집에서 자동으로 채워져요. 새로 상장한 ETF는 SEC 공시 목록에 오르기까지 몇 달 걸리기도 해요."));
   return sec;
 }
 /** the complete list: summary, a filter, and rows drawn 200 at a time */
