@@ -1,13 +1,13 @@
 {
- "updated_at": "2026-10-10T01:24:26Z",
- "asof": "2026-10-08",
+ "updated_at": "2026-10-10T02:37:31Z",
+ "asof": "2026-10-09",
  "tickers": 2319,
- "rows": 1238369,
+ "rows": 1240668,
  "universe": 2319,
  "min_cap": 2000000000.0,
  "start": "2024-08-01",
  "failed": 0,
  "kept_from_previous": 0,
- "newer_from_previous": 1,
+ "newer_from_previous": 0,
  "failed_tickers": []
 }
