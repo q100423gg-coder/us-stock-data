@@ -13,6 +13,9 @@
   - `fund_store.json.gz`(종목별 기업 데이터 누적본), `analysis_bundle.tar.gz`(페이지용 데이터 묶음) —
     `fundamentals.yml`이 가격 수집이 끝나면 `fundamentals.py`로 야후 파이낸스에서 받아요
     (프로필, 재무제표, 투자지표, 실적·컨센서스, 애널리스트 의견, 주주 구성, 내부자 거래, 배당, 뉴스)
+  - `etf_holdings.json.gz`(ETF 전체 보유종목) — 같은 작업이 번들을 만들기 전에 `etf_holdings.py`로 운용사가 공개하는
+    보유종목 파일을 받아요(뱅가드·SPDR·프로셰어즈·디렉시온·글로벌X·반에크·ARK·JP모건·퍼스트 트러스트, 뱅가드는 월 1회).
+    아이셰어즈·인베스코·슈왑은 자동 다운로드를 막아 둬서 페이지에 야후 상위 10개만 나와요
 - `analysis_page/`: 기업 분석 노트 페이지 소스(`shell.html` + `*.js`)와 빌드 스크립트 `build_analysis.py`.
   `python3 analysis_page/build_analysis.py --page-dir analysis_page --radar-summary <레이더 summary.json>
   --radar-template <레이더 template.html>`로 `site/`를 만들고, 매일 아침 예약 작업이 같은 스크립트로 갱신해요.
