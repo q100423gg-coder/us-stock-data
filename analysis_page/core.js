@@ -199,7 +199,7 @@ function insiderKind(text) {
 }
 
 // ---------------------------------------------------------------- data
-const DATA = { uni: null, rows: [], bySym: new Map(), dates: [], shards: new Map(), macro: null, cal: null, meta: null, ko: {} };
+const DATA = { uni: null, rows: [], bySym: new Map(), dates: [], shards: new Map(), hshards: new Map(), macro: null, cal: null, meta: null, ko: {} };
 async function loadJSON(path) {
   const r = await fetch(path, { cache: "no-cache" });
   if (!r.ok) throw new Error(path + " → HTTP " + r.status);
@@ -236,6 +236,15 @@ async function getRec(t) {
   const sh = r.sh;
   if (!DATA.shards.has(sh)) DATA.shards.set(sh, loadJSON(`data/f/${String(sh).padStart(2, "0")}.json`).catch((e) => { DATA.shards.delete(sh); throw e; }));
   const shard = await DATA.shards.get(sh);
+  return shard[t] || null;
+}
+/** every holding of an ETF {src, d, r: [[name, ticker, weight %, kind, exposure %], ...]}, or null */
+async function getHold(t) {
+  const ix = DATA.uni && DATA.uni.hold && DATA.uni.hold[t];
+  if (!ix) return null;
+  const sh = ix[0];
+  if (!DATA.hshards.has(sh)) DATA.hshards.set(sh, loadJSON(`data/h/${String(sh).padStart(2, "0")}.json`).catch((e) => { DATA.hshards.delete(sh); throw e; }));
+  const shard = await DATA.hshards.get(sh);
   return shard[t] || null;
 }
 /** delta-coded cents -> [dates[], closes[]] */
@@ -568,7 +577,7 @@ function barChart(host, opt) {
       if (i % every === 0 || i === n - 1) svg.append(sv("text", { x: m.l + band * (i + 0.5), y: H - 6, "text-anchor": "middle", class: "tick", text: c }));
     });
     const y0 = Y(0);
-    const hl = sv("rect", { class: "bandhl", y: m.t, height: ph, width: band, x: -999 });
+    const hl = sv("rect", { class: "bandhl", y: m.t, height: ph, width: band, x: m.l, visibility: "hidden" });   // svg overflow is visible: hide, don't park off-side
     svg.append(hl);
     for (let i = 0; i < n; i++) {
       const cx = m.l + band * (i + 0.5);
@@ -610,7 +619,7 @@ function barChart(host, opt) {
     for (let i = 0; i < n; i++) {
       const hit = sv("rect", { x: m.l + band * i, y: m.t, width: band, height: ph, fill: "transparent", tabindex: 0, class: "hit" });
       const show = (e) => {
-        hl.setAttribute("x", m.l + band * i);
+        hl.setAttribute("x", m.l + band * i); hl.setAttribute("visibility", "visible");
         const rows = ser.map((s) => [s.color, isNum(s.values[i]) ? (s.fmt || fmt)(s.values[i]) : "–", s.name, s.kind === "tick"]);
         const extra = opt.note ? opt.note(i) : null;
         const body = tipBody(opt.tipTitle ? opt.tipTitle(i) : cats[i], rows);
@@ -621,8 +630,8 @@ function barChart(host, opt) {
       hit.addEventListener("pointermove", show);
       hit.addEventListener("pointerdown", show);
       hit.addEventListener("focus", () => show(null));
-      hit.addEventListener("pointerleave", () => { hl.setAttribute("x", -999); hideTip(); });
-      hit.addEventListener("blur", () => { hl.setAttribute("x", -999); hideTip(); });
+      hit.addEventListener("pointerleave", () => { hl.setAttribute("visibility", "hidden"); hideTip(); });
+      hit.addEventListener("blur", () => { hl.setAttribute("visibility", "hidden"); hideTip(); });
       svg.append(hit);
     }
     host.append(svg);

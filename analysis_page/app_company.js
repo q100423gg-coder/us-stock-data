@@ -1067,11 +1067,75 @@ function secEtfOverview(R) {
 }
 const SW_KO = { realestate: "부동산", consumer_cyclical: "경기소비재", basic_materials: "소재", consumer_defensive: "필수소비재", technology: "기술",
   communication_services: "커뮤니케이션", financial_services: "금융", utilities: "유틸리티", industrials: "산업재", energy: "에너지", healthcare: "헬스케어" };
+const HKIND = { B: "채권", C: "현금성", F: "펀드", S: "스왑", U: "선물", O: "옵션", X: "기타" };
+const HSRC = { vanguard: ["뱅가드", "매월 말 기준 · 약 한 달 뒤 공개"], ssga: ["스테이트 스트리트(SPDR)", "매일 갱신"], proshares: ["프로셰어즈", "매일 갱신"],
+  direxion: ["디렉시온", "매일 갱신"], globalx: ["글로벌X", "매일 갱신"], vaneck: ["반에크", "매일 갱신"], ark: ["ARK", "매일 갱신"],
+  jpm: ["JP모건", "매일 갱신"], firsttrust: ["퍼스트 트러스트", "매일 갱신"] };
+/** one holding [name, ticker, weight %, kind, exposure %] -> the name cell */
+function holdName(x) {
+  const tk = x[1] || "", kind = x[3] || "";
+  const inU = tk ? row(tk) : null;
+  const nm = (inU && koName(inU.t)) || x[0] || tk;
+  return h("div", { class: "tkc" }, tk ? h("b", null, tk) : null,
+    h("span", { title: x[0] || "" }, HKIND[kind] ? h("i", { class: "hk" }, HKIND[kind]) : null, nm));
+}
+/** weight cell: % of net assets; derivatives show their notional exposure */
+function holdWeight(x) {
+  const w = x[2], e = x.length > 4 ? x[4] : null;
+  if (!isNum(w) && isNum(e)) return h("td", { class: "n" }, h("span", { class: "muted" }, "노출 "), fmtP(e, 1, false));
+  return h("td", { class: "n" + (isNum(w) && w < 0 ? " dn" : "") }, isNum(w) ? fmtP(w, Math.abs(w) < 0.1 ? 3 : 2, false) : "–",
+    isNum(e) ? h("small", { class: "krw" }, "노출 " + fmtP(e, 1, false)) : null);
+}
+function holdRow(x, rank) {
+  const tk = x[1] || "", inU = tk ? row(tk) : null;
+  const tr = h("tr", { class: inU ? "click" : null, tabindex: inU ? 0 : null },
+    rank != null ? h("td", { class: "rk" }, rank) : null, h("td", { class: "nm" }, holdName(x)), holdWeight(x));
+  if (inU) { tr.addEventListener("click", () => go("company", inU.t)); tr.addEventListener("keydown", (e) => { if (e.key === "Enter") go("company", inU.t); }); }
+  return tr;
+}
 function secHoldings(R) {
   const etf = R.etf || {};
-  const sec = h("section", { class: "panel sec", id: "s-hold" }, secHead("보유 종목", "상위 10개 · 섹터 비중"));
+  const sym = CO.sym || R.t;
+  const ix = DATA.uni && DATA.uni.hold && DATA.uni.hold[sym];           // [shard, holdings, source, as of]
+  const src = ix ? HSRC[ix[2]] || [ix[2], ""] : null;
+  const top = ix && etf.top && etf.top.length ? etf.top : null;
+  const sec = h("section", { class: "panel sec", id: "s-hold" },
+    secHead("보유 종목", ix ? `전체 ${fmtN(ix[1])}개 · ${src[0]} ${fmtD(ix[3])} 기준` : "상위 10개 · 섹터 비중"));
   const grid = h("div", { class: "grid2" });
-  if (etf.hold && etf.hold.length) {
+  const left = h("div", { class: "hcol" });
+  if (top) {
+    const tbl = h("table", { class: "t hlist" }, h("thead", null, h("tr", null, h("th", { class: "nm" }, "종목"), h("th", { class: "n" }, "비중"))),
+      h("tbody", null, top.map((x) => holdRow(x, null))));
+    const topBox = h("div", { class: "tw" }, tbl);
+    const fullBox = h("div", { class: "hfull", id: "hfull", hidden: true });
+    const btn = h("button", { type: "button", class: "btn sm", "aria-expanded": "false", "aria-controls": "hfull" },
+      ix[1] > top.length ? `전체 ${fmtN(ix[1])}개 보기` : "보유 종목 표로 보기");
+    btn.addEventListener("click", async () => {
+      const open = btn.getAttribute("aria-expanded") === "true";
+      if (open) {
+        fullBox.hidden = true; topBox.hidden = false;
+        btn.setAttribute("aria-expanded", "false");
+        btn.textContent = ix[1] > top.length ? `전체 ${fmtN(ix[1])}개 보기` : "보유 종목 표로 보기";
+        sec.scrollIntoView({ block: "start" });
+        return;
+      }
+      btn.disabled = true; btn.textContent = "불러오는 중…";
+      try {
+        const H = await getHold(sym);
+        if (!H || !H.r) throw new Error("데이터 없음");
+        if (!fullBox.childNodes.length) fillFull(fullBox, H);
+        fullBox.hidden = false; topBox.hidden = true;
+        btn.setAttribute("aria-expanded", "true");
+        btn.textContent = "상위 10개만 보기";
+      } catch (e) {
+        btn.textContent = `전체 ${fmtN(ix[1])}개 보기`;
+        fullBox.hidden = false;
+        clear(fullBox).append(h("p", { class: "note" }, "전체 목록을 불러오지 못했어요. 잠시 후 다시 눌러 주세요. (" + e.message + ")"));
+      } finally { btn.disabled = false; }
+    });
+    left.append(topBox, fullBox, h("div", { class: "hbar" }, btn,
+      h("span", { class: "note" }, `${src[0]} 공시 보유종목 · ${src[1]}`)));
+  } else if (etf.hold && etf.hold.length) {
     const tbl = h("table", { class: "t" });
     tbl.append(h("thead", null, h("tr", null, h("th", null, "종목"), h("th", { class: "n" }, "비중"))));
     const tb = h("tbody");
@@ -1082,15 +1146,67 @@ function secHoldings(R) {
       tb.append(tr);
     }
     tbl.append(tb);
-    grid.append(h("div", { class: "tw" }, tbl));
+    left.append(h("div", { class: "tw" }, tbl),
+      h("p", { class: "note" }, "상위 10개는 야후 파이낸스 자료예요. 이 ETF는 운용사의 전체 보유종목 파일을 자동으로 받을 수 없어 전체 목록은 아직 없어요."));
   }
+  if (left.childNodes.length) grid.append(left);
   if (etf.sw && etf.sw.length) {
     const sw = etf.sw.filter((x) => x[1] > 0).sort((a, b) => b[1] - a[1]);
     const box = h("div", { class: "chart" });
-    grid.append(h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, h("h3", { class: "sub-h" }, "섹터 비중"), box));
+    grid.append(h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 } }, h("h3", { class: "sub-h" }, "섹터 비중"), box,
+      ix ? h("p", { class: "note" }, "섹터 비중은 야후 파이낸스 자료예요.") : null));
     barChart(box, { height: 220, cats: sw.map((x) => (SW_KO[x[0]] || x[0]).slice(0, 4)), yFmt: (v) => fmtN(v * 100, 0) + "%",
       series: [{ name: "비중", color: "var(--s1)", values: sw.map((x) => x[1]), fmt: (v) => fmtR(v, 1) }], tipTitle: (i) => SW_KO[sw[i][0]] || sw[i][0], label: "섹터 비중" });
   }
-  sec.append(grid.childNodes.length ? grid : h("p", { class: "empty" }, "보유 종목 데이터가 없어요."));
+  if (grid.childNodes.length === 1) grid.style.gridTemplateColumns = "minmax(0,1fr)";
+  if (!grid.childNodes.length) clear(sec).append(secHead("보유 종목", ""));
+  sec.append(grid.childNodes.length ? grid : h("p", { class: "empty" },
+    "보유 종목 데이터가 없어요. 금·은·비트코인 현물 ETF처럼 실물을 직접 보관하거나 선물로 운용하는 상품은 종목 목록이 없어요."));
   return sec;
+}
+/** the complete list: summary, a filter, and rows drawn 200 at a time */
+function fillFull(box, H) {
+  const rows = H.r.map((x, i) => ({ x, rank: i + 1, key: ((x[1] || "") + " " + (x[0] || "") + " " + (x[1] && row(x[1]) ? koName(x[1]) : "")).toLowerCase() }));
+  const cnt = {}, wsum = {};
+  let exSum = 0, hasEx = false;
+  for (const { x } of rows) {
+    const k = x[3] || "";
+    cnt[k] = (cnt[k] || 0) + 1;
+    if (isNum(x[2])) wsum[k] = (wsum[k] || 0) + x[2];
+    if (x.length > 4 && isNum(x[4])) { exSum += x[4]; hasEx = true; }
+  }
+  const kinds = [["", "주식"], ["F", "펀드"], ["B", "채권"], ["S", "스왑"], ["U", "선물"], ["O", "옵션"], ["C", "현금성"], ["X", "기타"]].filter(([k]) => cnt[k]);
+  const sum = h("div", { class: "hsum" }, kinds.map(([k, lab]) => h("span", null, lab + " ", h("b", null, fmtN(cnt[k])),
+    isNum(wsum[k]) && kinds.length > 1 ? h("span", { class: "muted" }, " · " + fmtP(wsum[k], 1, false)) : null)),
+    hasEx ? h("span", null, "파생 노출 ", h("b", null, fmtP(exSum, 1, false))) : null);
+  const q = h("input", { class: "inp", type: "search", autocomplete: "off", spellcheck: "false", placeholder: "보유종목에서 찾기 (예: NVDA, 애플)", "aria-label": "보유종목에서 찾기", style: { flex: "1 1 200px", maxWidth: "320px" } });
+  const tb = h("tbody");
+  const tbl = h("table", { class: "t hlist" }, h("thead", null, h("tr", null, h("th", { class: "rk" }, "#"), h("th", { class: "nm" }, "종목"), h("th", { class: "n" }, "비중"))), tb);
+  const tw = h("div", { class: "tw" }, tbl);
+  const more = h("button", { type: "button", class: "btn sm", hidden: true });
+  const info = h("span", { class: "note" });
+  let list = rows, shown = 0;
+  const draw = (reset) => {
+    if (reset) { clear(tb); shown = 0; tw.scrollTop = 0; }
+    const next = list.slice(shown, shown + 200);
+    for (const { x, rank } of next) tb.append(holdRow(x, rank));
+    shown += next.length;
+    if (!list.length) tb.append(h("tr", null, h("td", { colspan: 3, class: "muted" }, "찾는 종목이 없어요.")));
+    more.hidden = shown >= list.length;
+    more.textContent = `200개 더 보기 (남은 ${fmtN(list.length - shown)}개)`;
+    info.textContent = list.length === rows.length ? `${fmtN(rows.length)}개 중 ${fmtN(shown)}개 표시` : `${fmtN(list.length)}개 찾음`;
+  };
+  let tq = 0;
+  q.addEventListener("input", () => {
+    clearTimeout(tq);
+    tq = setTimeout(() => { const s = q.value.trim().toLowerCase(); list = s ? rows.filter((r) => r.key.includes(s)) : rows; draw(true); }, 150);
+  });
+  more.addEventListener("click", () => draw(false));
+  const src = HSRC[H.src] || [H.src, ""];
+  const deriv = cnt.S || cnt.U || cnt.O;
+  box.append(sum, rows.length > 15 ? h("div", { class: "hbar" }, q, info) : null, tw, h("div", { class: "hbar" }, more),
+    h("p", { class: "note" }, `출처: ${src[0]} 공개 자료 · ${fmtD(H.d)} 기준 전체 보유종목(${src[1]}). 비중은 펀드 순자산 대비예요.` +
+      (deriv ? " 스왑·선물은 시가가 계약 손익뿐이라 비중 대신 따라가는 규모(노출)를 보여줘요. 레버리지·인버스 ETF는 주식 비중과 파생 노출을 더하면 목표 배수 근처가 돼요." : "") +
+      " 표에서 종목을 누르면 그 종목 분석으로 이동해요."));
+  draw(true);
 }
