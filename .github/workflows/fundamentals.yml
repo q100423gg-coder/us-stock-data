@@ -62,6 +62,7 @@ jobs:
         env:
           HOLD_BUDGET_SEC: "900"
           HOLD_ONLY: ${{ github.event.inputs.holdings_only || '' }}
+          SEC_CONTACT: ${{ secrets.SEC_CONTACT }}
 
       - name: Fetch company data and build the page bundle
         run: timeout 2700 python fundamentals.py all

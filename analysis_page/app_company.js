@@ -1070,7 +1070,7 @@ const SW_KO = { realestate: "부동산", consumer_cyclical: "경기소비재", b
 const HKIND = { B: "채권", C: "현금성", F: "펀드", S: "스왑", U: "선물", O: "옵션", X: "기타" };
 const HSRC = { vanguard: ["뱅가드", "매월 말 기준 · 약 한 달 뒤 공개"], ssga: ["스테이트 스트리트(SPDR)", "매일 갱신"], proshares: ["프로셰어즈", "매일 갱신"],
   direxion: ["디렉시온", "매일 갱신"], globalx: ["글로벌X", "매일 갱신"], vaneck: ["반에크", "매일 갱신"], ark: ["ARK", "매일 갱신"],
-  jpm: ["JP모건", "매일 갱신"], firsttrust: ["퍼스트 트러스트", "매일 갱신"] };
+  jpm: ["JP모건", "매일 갱신"], firsttrust: ["퍼스트 트러스트", "매일 갱신"], nport: ["SEC 공시(N-PORT)", "분기 말 기준 · 약 두 달 뒤 공개"] };
 /** one holding [name, ticker, weight %, kind, exposure %] -> the name cell */
 function holdName(x) {
   const tk = x[1] || "", kind = x[3] || "";
@@ -1098,24 +1098,31 @@ function secHoldings(R) {
   const sym = CO.sym || R.t;
   const ix = DATA.uni && DATA.uni.hold && DATA.uni.hold[sym];           // [shard, holdings, source, as of]
   const src = ix ? HSRC[ix[2]] || [ix[2], ""] : null;
-  const top = ix && etf.top && etf.top.length ? etf.top : null;
+  // the top 10: the full list's own (issuers' files), else Yahoo's (kept for SEC filings, which are a quarter old)
+  const own = ix && etf.top && etf.top.length ? etf.top : null;
+  const yh = !own && etf.hold && etf.hold.length
+    ? etf.hold.map((x) => [x[1] || x[0] || "", (x[0] || "").replace(".", "-"), isNum(x[2]) ? x[2] * 100 : null]) : null;
+  const top = own || yh;
   const sec = h("section", { class: "panel sec", id: "s-hold" },
     secHead("보유 종목", ix ? `전체 ${fmtN(ix[1])}개 · ${src[0]} ${fmtD(ix[3])} 기준` : "상위 10개 · 섹터 비중"));
   const grid = h("div", { class: "grid2" });
   const left = h("div", { class: "hcol" });
-  if (top) {
-    const tbl = h("table", { class: "t hlist" }, h("thead", null, h("tr", null, h("th", { class: "nm" }, "종목"), h("th", { class: "n" }, "비중"))),
-      h("tbody", null, top.map((x) => holdRow(x, null))));
-    const topBox = h("div", { class: "tw" }, tbl);
+  const topBox = top ? h("div", { class: "tw" }, h("table", { class: "t hlist" },
+    h("thead", null, h("tr", null, h("th", { class: "nm" }, "종목"), h("th", { class: "n" }, "비중"))),
+    h("tbody", null, top.map((x) => holdRow(x, null))))) : null;
+  const srcNote = own ? `${src[0]} 공시 보유종목 · ${src[1]}`
+    : ix ? `위 상위 10개는 야후 파이낸스 최신 자료이고, 전체 목록은 ${src[0]} ${fmtD(ix[3])} 기준이에요(${src[1]}).`
+    : "상위 10개는 야후 파이낸스 자료예요. 이 ETF는 운용사의 전체 보유종목 파일을 자동으로 받을 수 없어 전체 목록은 아직 없어요.";
+  if (ix) {
+    const label = () => (!top || ix[1] > top.length ? `전체 ${fmtN(ix[1])}개 보기` : "보유 종목 표로 보기");
     const fullBox = h("div", { class: "hfull", id: "hfull", hidden: true });
-    const btn = h("button", { type: "button", class: "btn sm", "aria-expanded": "false", "aria-controls": "hfull" },
-      ix[1] > top.length ? `전체 ${fmtN(ix[1])}개 보기` : "보유 종목 표로 보기");
+    const btn = h("button", { type: "button", class: "btn sm", "aria-expanded": "false", "aria-controls": "hfull" }, label());
     btn.addEventListener("click", async () => {
-      const open = btn.getAttribute("aria-expanded") === "true";
-      if (open) {
-        fullBox.hidden = true; topBox.hidden = false;
+      if (btn.getAttribute("aria-expanded") === "true") {
+        fullBox.hidden = true;
+        if (topBox) topBox.hidden = false;
         btn.setAttribute("aria-expanded", "false");
-        btn.textContent = ix[1] > top.length ? `전체 ${fmtN(ix[1])}개 보기` : "보유 종목 표로 보기";
+        btn.textContent = label();
         sec.scrollIntoView({ block: "start" });
         return;
       }
@@ -1123,31 +1130,20 @@ function secHoldings(R) {
       try {
         const H = await getHold(sym);
         if (!H || !H.r) throw new Error("데이터 없음");
-        if (!fullBox.childNodes.length) fillFull(fullBox, H);
-        fullBox.hidden = false; topBox.hidden = true;
+        if (!fullBox.querySelector("table")) fillFull(clear(fullBox), H);
+        fullBox.hidden = false;
+        if (topBox) topBox.hidden = true;
         btn.setAttribute("aria-expanded", "true");
-        btn.textContent = "상위 10개만 보기";
+        btn.textContent = top ? "상위 10개만 보기" : "접기";
       } catch (e) {
-        btn.textContent = `전체 ${fmtN(ix[1])}개 보기`;
+        btn.textContent = label();
         fullBox.hidden = false;
         clear(fullBox).append(h("p", { class: "note" }, "전체 목록을 불러오지 못했어요. 잠시 후 다시 눌러 주세요. (" + e.message + ")"));
       } finally { btn.disabled = false; }
     });
-    left.append(topBox, fullBox, h("div", { class: "hbar" }, btn,
-      h("span", { class: "note" }, `${src[0]} 공시 보유종목 · ${src[1]}`)));
-  } else if (etf.hold && etf.hold.length) {
-    const tbl = h("table", { class: "t" });
-    tbl.append(h("thead", null, h("tr", null, h("th", null, "종목"), h("th", { class: "n" }, "비중"))));
-    const tb = h("tbody");
-    for (const x of etf.hold) {
-      const inU = x[0] && row(x[0].replace(".", "-"));
-      const tr = h("tr", { class: inU ? "click" : null }, h("td", null, h("div", { class: "tkc" }, h("b", null, x[0] || ""), h("span", null, (inU && koName(inU.t)) || x[1] || ""))), h("td", { class: "n" }, fmtR(x[2], 2)));
-      if (inU) tr.addEventListener("click", () => go("company", inU.t));
-      tb.append(tr);
-    }
-    tbl.append(tb);
-    left.append(h("div", { class: "tw" }, tbl),
-      h("p", { class: "note" }, "상위 10개는 야후 파이낸스 자료예요. 이 ETF는 운용사의 전체 보유종목 파일을 자동으로 받을 수 없어 전체 목록은 아직 없어요."));
+    left.append(...[topBox, fullBox, h("div", { class: "hbar" }, btn, h("span", { class: "note" }, srcNote))].filter(Boolean));
+  } else if (topBox) {
+    left.append(topBox, h("p", { class: "note" }, srcNote));
   }
   if (left.childNodes.length) grid.append(left);
   if (etf.sw && etf.sw.length) {
@@ -1205,7 +1201,8 @@ function fillFull(box, H) {
   const src = HSRC[H.src] || [H.src, ""];
   const deriv = cnt.S || cnt.U || cnt.O;
   box.append(sum, rows.length > 15 ? h("div", { class: "hbar" }, q, info) : null, tw, h("div", { class: "hbar" }, more),
-    h("p", { class: "note" }, `출처: ${src[0]} 공개 자료 · ${fmtD(H.d)} 기준 전체 보유종목(${src[1]}). 비중은 펀드 순자산 대비예요.` +
+    h("p", { class: "note" }, `출처: ${src[0]} · ${fmtD(H.d)} 기준 전체 보유종목(${src[1]}). 비중은 펀드 순자산 대비예요.` +
+      (H.src === "nport" ? " 공시 시점 뒤에 바뀐 종목과 비중은 반영되지 않아요." : "") +
       (deriv ? " 스왑·선물은 시가가 계약 손익뿐이라 비중 대신 따라가는 규모(노출)를 보여줘요. 레버리지·인버스 ETF는 주식 비중과 파생 노출을 더하면 목표 배수 근처가 돼요." : "") +
       " 표에서 종목을 누르면 그 종목 분석으로 이동해요."));
   draw(true);
