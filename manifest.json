@@ -1,5 +1,5 @@
 {
- "updated_at": "2026-10-10T00:23:03Z",
+ "updated_at": "2026-10-10T00:31:58Z",
  "asof": "2026-10-08",
  "tickers": 2319,
  "rows": 1238368,
@@ -8,6 +8,6 @@
  "start": "2024-08-01",
  "failed": 0,
  "kept_from_previous": 0,
- "newer_from_previous": 1,
+ "newer_from_previous": 7,
  "failed_tickers": []
 }
