@@ -15,8 +15,8 @@ import requests
 OUT = Path("probe_out")
 OUT.mkdir(exist_ok=True)
 LOG = open(OUT / "log.txt", "w", encoding="utf-8")
-UAS = ["us-stock-data/1.0 (+https://github.com/q100423gg-coder/us-stock-data)",
-       "us-stock-data github.com/q100423gg-coder/us-stock-data"]
+UAS = ["us-stock-data/1.0 (+https://github.com/q100423gg-coder/us-stock-data) 334556648+q100423gg-coder@users.noreply.github.com",
+       "us-stock-data 334556648+q100423gg-coder@users.noreply.github.com"]
 S = requests.Session()
 
 
@@ -43,7 +43,7 @@ def main():
     for ua in UAS:
         S.headers.update({"User-Agent": ua, "Accept-Encoding": "gzip, deflate"})
         r = get("https://www.sec.gov/files/company_tickers_mf.json")
-        log("UA", repr(ua), "->", r.status_code, len(r.content), r.text[:160].replace("\n", " ") if r.status_code != 200 else "")
+        log("UA", repr(ua), "->", r.status_code, len(r.content), re.sub(r"<[^>]+>", " ", r.text)[:1200] if r.status_code != 200 else "")
         if r.status_code == 200:
             ok_ua = ua
             mf = r.json()
