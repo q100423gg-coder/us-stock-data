@@ -10,8 +10,9 @@ Universe (rebuilt on every run):
   * anything listed in extra_tickers.txt (one symbol per line, # comments allowed)
 
 Output (out/):
-  prices.parquet   date, ticker, open, high, low, close, volume — Yahoo Finance daily bars,
-                   split-adjusted (not dividend-adjusted), last DAYS calendar days
+  prices.parquet   date, ticker, open, high, low, close, adj, volume — Yahoo Finance daily bars,
+                   split-adjusted (not dividend-adjusted), last DAYS calendar days; adj is Yahoo's
+                   adjusted close (dividends and distributions reinvested: the total-return series)
   universe.csv     ticker, name, sector, industry, market_cap, country, sp500, etf
   manifest.json    updated_at (UTC), asof (latest session), counts, tickers that failed
 
@@ -140,14 +141,18 @@ def frames_from(df, tickers):
         sub = sub.rename(columns=str.lower)
         if "close" not in sub:
             continue
-        sub = sub[["open", "high", "low", "close", "volume"]].dropna(subset=["close"])
+        if "adj close" not in sub:
+            sub = sub.assign(**{"adj close": sub["close"]})
+        sub = sub[["open", "high", "low", "close", "adj close", "volume"]].dropna(subset=["close"])
         sub = sub[sub["close"] > 0]
         if sub.empty:
             continue
         idx = pd.to_datetime(sub.index)
         idx = idx.tz_localize(None) if idx.tz is not None else idx
+        adj = sub["adj close"].where(sub["adj close"] > 0)
         f = pd.DataFrame({"date": idx.normalize(), "open": sub["open"].values, "high": sub["high"].values,
                           "low": sub["low"].values, "close": sub["close"].values,
+                          "adj": adj.fillna(sub["close"]).values,
                           "volume": sub["volume"].fillna(0).values})
         o = f["open"].fillna(f["close"])
         f["high"] = np.fmax(np.fmax(f["high"].fillna(f["close"]), o), f["close"])     # Yahoo's newest bar can be
@@ -212,7 +217,10 @@ def main():
         keep_n = newest.notna() & (prev["date"] > newest)
         kept, filled = int(prev.loc[keep_f, "ticker"].nunique()), int(prev.loc[keep_n, "ticker"].nunique())
         prices = pd.concat([prices, prev[keep_f | keep_n]], ignore_index=True)
-    prices = prices[["date", "ticker", "open", "high", "low", "close", "volume"]]
+    if "adj" not in prices:                                  # rows kept from a release made before `adj` existed
+        prices["adj"] = np.nan
+    prices["adj"] = prices["adj"].fillna(prices["close"])
+    prices = prices[["date", "ticker", "open", "high", "low", "close", "adj", "volume"]]
     prices = prices.drop_duplicates(["ticker", "date"], keep="first").sort_values(["ticker", "date"])
     prices["volume"] = prices["volume"].astype("float64")
     prices.to_parquet(OUT / "prices.parquet", index=False, compression="zstd")
