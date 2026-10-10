@@ -650,7 +650,7 @@ def _txt(el, name):
     return None
 
 
-NPORT_PARSER = 2       # bump when parse_nport changes: stored filings are read again
+NPORT_PARSER = 3       # bump when parse_nport changes: stored filings are read again
 DERIV_KIND = {"swapDeriv": "S", "futrDeriv": "U", "optionSwaptionWarrantDeriv": "O", "fwdDeriv": "X", "othDeriv": "X"}
 BOND_CATS = {"DBT", "AMBS", "ABS-MBS", "ABS-APCP", "ABS-CBDO", "ABS-O", "LON", "SN"}
 
@@ -683,7 +683,9 @@ def parse_nport(content):
                 dpay = _txt(d0, "payOffProf")
                 dref = _txt(d0, "indexName") or _txt(d0, "issueTitle") or _txt(d0, "issuerName")
             debt = k.get("debtSec")
-            coll = (_txt(k.get("securityLending"), "isCashCollateral") or "").upper().startswith("Y")
+            sl = k.get("securityLending")      # "Y" answers come as <cashCollateralCondition isCashCollateral="Y" .../>
+            coll = sl is not None and any(_local(c.tag) == "cashCollateralCondition" and (c.get("isCashCollateral") or "").upper() == "Y"
+                                          or _local(c.tag) == "isCashCollateral" and (c.text or "").strip().upper() == "Y" for c in sl.iter())
             recs.append({"coll": coll, "name": g("name") or "", "title": g("title") or "", "cusip": g("cusip") or "",
                          "isin": ids.get("isin") or "", "ticker": ids.get("ticker") or "", "pct": num(g("pctVal")),
                          "cat": cat, "icat": icat, "pay": g("payoffProfile"), "dk": dk, "dnot": dnot, "dpay": dpay,

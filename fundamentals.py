@@ -978,7 +978,7 @@ def phase_bundle(universe, store, calendar):
         if H and H.get("r"):
             rows = [[x[0], holding_ticker(x[1], uni_set)] + list(x[2:]) for x in H["r"]]
             full["etf"] = dict(full.get("etf") or {})
-            if H.get("src") != "nport" or not full["etf"].get("hold"):
+            if H.get("src") != "nport" or len(full["etf"].get("hold") or []) < 5:
                 full["etf"]["top"] = rows[:10]      # a quarter-old filing: Yahoo's current top 10 stays when it has one
             hpack[t] = {"src": H.get("src"), "d": H.get("d"), "r": rows}
         shards[row["sh"]][t] = full
