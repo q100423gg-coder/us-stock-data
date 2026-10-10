@@ -650,6 +650,7 @@ def _txt(el, name):
     return None
 
 
+NPORT_PARSER = 2       # bump when parse_nport changes: stored filings are read again
 DERIV_KIND = {"swapDeriv": "S", "futrDeriv": "U", "optionSwaptionWarrantDeriv": "O", "fwdDeriv": "X", "othDeriv": "X"}
 BOND_CATS = {"DBT", "AMBS", "ABS-MBS", "ABS-APCP", "ABS-CBDO", "ABS-O", "LON", "SN"}
 
@@ -682,13 +683,14 @@ def parse_nport(content):
                 dpay = _txt(d0, "payOffProf")
                 dref = _txt(d0, "indexName") or _txt(d0, "issueTitle") or _txt(d0, "issuerName")
             debt = k.get("debtSec")
-            recs.append({"name": g("name") or "", "title": g("title") or "", "cusip": g("cusip") or "",
+            coll = (_txt(k.get("securityLending"), "isCashCollateral") or "").upper().startswith("Y")
+            recs.append({"coll": coll, "name": g("name") or "", "title": g("title") or "", "cusip": g("cusip") or "",
                          "isin": ids.get("isin") or "", "ticker": ids.get("ticker") or "", "pct": num(g("pctVal")),
                          "cat": cat, "icat": icat, "pay": g("payoffProfile"), "dk": dk, "dnot": dnot, "dpay": dpay,
                          "dref": dref, "mat": _txt(debt, "maturityDt") if debt is not None else None,
                          "rate": _txt(debt, "annualizedRt") if debt is not None else None})
             el.clear()
-    rows, unresolved = [], {}
+    rows, unresolved, coll = [], {}, set()
     for x in recs:
         nm, ti = x["name"], x["title"]
         if x["dk"]:
@@ -706,7 +708,11 @@ def parse_nport(content):
             rows.append(mk(bond_name(nm or ti, x["rate"], x["mat"]), "", x["pct"], "B"))
             continue
         if x["cat"] in ("STIV", "RA"):
-            rows.append(mk(nm or ti, "", x["pct"], "C"))
+            row = mk(bond_name(nm or ti, x["rate"], x["mat"]) if x["mat"] else (nm or ti), "", x["pct"], "C")
+            if x["coll"]:                      # cash received for lent securities, reinvested: listed after the rest
+                row[0] = (row[0] + " (증권 대여 담보)")[:100]
+                coll.add(id(row))
+            rows.append(row)
             continue
         if x["cat"] in ("EC", "EP"):
             kind = "F" if x["icat"] == "RF" else ""
@@ -721,6 +727,7 @@ def parse_nport(content):
             unresolved[id(row)] = (cus if len(cus) == 9 and cus != "000000000" else "", isin)
         rows.append(row)
     rows = finish(rows)
+    rows = [r for r in rows if id(r) not in coll] + [r for r in rows if id(r) in coll]
     return asof, rows, {i: unresolved[id(r)] for i, r in enumerate(rows) if id(r) in unresolved}
 
 
@@ -781,10 +788,10 @@ def src_nport(t, old):
     if not fl:
         raise Unavailable("no N-PORT filing")
     fd, acc, folder = fl[0]
-    if old and old.get("src") == "nport" and old.get("acc") == acc:
+    if old and old.get("src") == "nport" and old.get("acc") == acc and old.get("pv") == NPORT_PARSER:
         return "same", None, None
     asof, rows, unresolved = parse_nport(sec_get(folder + "primary_doc.xml").content)
-    return asof, rows, {"acc": acc, "filed": fd, "u": {str(i): list(v) for i, v in unresolved.items()}}
+    return asof, rows, {"acc": acc, "filed": fd, "pv": NPORT_PARSER, "u": {str(i): list(v) for i, v in unresolved.items()}}
 
 
 SOURCES = {"vanguard": src_vanguard, "ssga": src_ssga, "proshares": src_proshares, "direxion": src_direxion,
@@ -878,7 +885,7 @@ def main():
             continue
         bs = STATUS["by_src"].setdefault(src, {"ok": 0, "kept": 0, "same": 0, "failed": 0})
         due = (not old or old.get("src") != src or age_h(old.get("at")) >= max(MIN_AGE_H, REFRESH_H.get(src, 0))
-               or (seed and src == "vanguard"))
+               or (seed and src == "vanguard") or (src == "nport" and old.get("pv") != NPORT_PARSER))
         if only:
             due = t in only
         if not due or time.time() - t0 > BUDGET:
