@@ -8,7 +8,8 @@
 Inputs
   bundle          analysis_bundle.tar.gz from the us-stock-data release (downloaded when not given)
   macro           newest macro.json (downloaded when not given; replaces the bundle's copy when newer)
-  radar-summary   추세 레이더's data/summary.json: adds each ticker's verdict (v) and grade (g)
+  radar-summary   추세 레이더's data/summary.json: adds each ticker's verdict (v) and grade (g), stocks and ETFs,
+                  and the Korean labels of the ETFs
   radar-template  추세 레이더's page template: Korean names and search aliases (KO tables)
   page            the assembled page (src/index.html.txt of the published artifact), or
   page-dir        the page sources (shell.html + *.js) to assemble a new index.html
@@ -125,13 +126,23 @@ def main():
     n = len(cols["t"])
     # 추세 레이더 verdicts and grades
     radar_asof = None
+    etf_ko = {}
     if a.radar_summary and Path(a.radar_summary).exists():
         rs = json.loads(Path(a.radar_summary).read_text(encoding="utf-8"))
-        rc = rs.get("cols", {})
         radar_asof = (rs.get("meta") or {}).get("asof")
-        pos = {t: i for i, t in enumerate(rc.get("t", []))}
-        cols["v"] = [rc["ac"][pos[t]] if t in pos and "ac" in rc else None for t in cols["t"]]
-        cols["g"] = [rc["g"][pos[t]] if t in pos and "g" in rc else None for t in cols["t"]]
+        # stocks are in `cols`, ETFs in the columnar `etf` block (same verdict codes and grades)
+        vg = {}
+        for rc in (rs.get("etf") or {}, rs.get("cols") or {}):
+            if not isinstance(rc, dict) or not isinstance(rc.get("t"), list):
+                continue
+            ac, gr = rc.get("ac") or [], rc.get("g") or []
+            for i, t in enumerate(rc["t"]):
+                vg[t] = (ac[i] if i < len(ac) else None, gr[i] if i < len(gr) else None)
+        e = rs.get("etf") or {}
+        if isinstance(e, dict) and isinstance(e.get("t"), list) and isinstance(e.get("nm"), list):
+            etf_ko = {t: nm for t, nm in zip(e["t"], e["nm"]) if isinstance(nm, str) and nm.strip()}
+        cols["v"] = [vg.get(t, (None, None))[0] for t in cols["t"]]
+        cols["g"] = [vg.get(t, (None, None))[1] for t in cols["t"]]
     else:
         cols["v"] = [None] * n
         cols["g"] = [None] * n
@@ -139,6 +150,9 @@ def main():
     ko = {}
     if a.radar_template and Path(a.radar_template).exists():
         ko = ko_tables(Path(a.radar_template).read_text(encoding="utf-8"))
+    # ETFs: the radar's Korean labels (반도체 3배, 나스닥 100 ...) as display names and search aliases
+    for t, nm in etf_ko.items():
+        ko.setdefault(t, nm.replace("|", "/"))
     uni["ko"] = {t: ko[t] for t in cols["t"] if t in ko}
     built = datetime.now(KST)
     uni["built"] = built.strftime("%-m/%-d %H:%M")
