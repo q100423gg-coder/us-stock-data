@@ -1,10 +1,9 @@
-"""Temporary probe: raw holdings pages of Amplify (BWET, HACK, BLOK, DIVO) and Roundhill (DRAM) as GitHub's network sees them.
-Writes probe_out/ (bodies + meta.json); the workflow uploads it to the data release as probe.tar.gz."""
+"""Temporary probe (round 2): the scripts behind Amplify's holdings tables and Roundhill's daily holdings files,
+as GitHub's network sees them. Writes probe_out/ (bodies + meta.json); the workflow uploads it as probe.tar.gz."""
 import json
-import re
 import time
+from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import urljoin
 
 import requests
 
@@ -17,38 +16,40 @@ OUT.mkdir(exist_ok=True)
 META = []
 
 
-def get(url, name, accept="text/html,application/xhtml+xml,*/*;q=0.8"):
-    time.sleep(0.8)
+def get(url, name, accept="*/*"):
+    time.sleep(0.6)
     try:
         r = S.get(url, headers={"Accept": accept}, timeout=60)
-        (OUT / name).write_bytes(r.content)
         META.append({"url": url, "file": name, "status": r.status_code, "final": r.url,
                      "type": r.headers.get("content-type"), "bytes": len(r.content)})
+        if r.status_code == 200:
+            (OUT / name).write_bytes(r.content)
         return r
     except Exception as e:
         META.append({"url": url, "file": name, "error": f"{type(e).__name__}: {e}"[:300]})
         return None
 
 
-for t in ("BWET", "HACK", "BLOK", "DIVO"):
-    r = get(f"https://amplifyetfs.com/{t}-holdings", f"amplify_{t}_holdings.html")
-    if t == "BWET":
-        get(f"https://amplifyetfs.com/{t.lower()}/", f"amplify_{t}_page.html")
-    if r is not None and r.status_code == 200:
-        for i, u in enumerate(sorted(set(re.findall(r'(?:href|src)="([^"]+\.(?:csv|xlsx?)(?:\?[^"]*)?)"', r.text, re.I)))[:4]):
-            get(urljoin(r.url, u), f"amplify_{t}_file{i}" + Path(u.split("?")[0]).suffix)
+A = "https://amplifyetfs.com/wp-content/plugins/"
+for i, u in enumerate([A + "amplify-data/js/amplify-firestore.js", A + "amplify-data/amplify-data-loader.js",
+                       A + "amplify-data/data-dictionary.json",
+                       A + "amplify-firestore-shortcodes/includes/js/all-holdings-table.js",
+                       A + "amplify-firestore-shortcodes/includes/js/holdings-download.js",
+                       A + "amplify-firestore-shortcodes/includes/js/top-holdings-table.js"]):
+    get(u, f"amplify_{i}_" + u.rsplit("/", 1)[1])
 
-r = get("https://www.roundhillinvestments.com/etf/dram/", "roundhill_DRAM_page.html")
-if r is not None and r.status_code == 200:
-    srcs = re.findall(r'<script[^>]+src="([^"]+)"', r.text)
-    n = 0
-    for u in srcs:
-        full = urljoin(r.url, u)
-        if "roundhillinvestments.com" in full and n < 30:
-            get(full, f"roundhill_js_{n:02d}.js", "*/*")
-            n += 1
-    for i, u in enumerate(sorted(set(re.findall(r'["\'](/?(?:api|wp-json|assets/data|data)/[^"\']{3,120})["\']', r.text)))[:10]):
-        get(urljoin(r.url, u), f"roundhill_ep{i}.txt", "application/json,*/*")
+R = "https://www.roundhillinvestments.com/assets/data/"
+d = date.today()
+for k in range(15):
+    day = d - timedelta(days=k)
+    r = get(R + f"FilepointRoundhill.40RU.RU_Holdings_{day:%m%d%Y}.csv", f"roundhill_holdings_{day:%Y%m%d}.csv")
+    if r is not None and r.status_code == 200 and not r.content.lstrip()[:15].lower().startswith(b"<!doctype"):
+        break
+for k in range(15):
+    day = d - timedelta(days=k)
+    r = get(R + f"rex_data/REX_RAM_Holdings_{day:%Y%m%d}.csv", f"rex_RAM_holdings_{day:%Y%m%d}.csv")
+    if r is not None and r.status_code == 200 and not r.content.lstrip()[:15].lower().startswith(b"<!doctype"):
+        break
 
 (OUT / "meta.json").write_text(json.dumps(META, indent=1))
 print(json.dumps(META, indent=1))
