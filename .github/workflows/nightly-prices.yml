@@ -55,4 +55,5 @@ jobs:
           git config user.name "nightly-prices-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add manifest.json
-          git diff --staged --quiet || { git commit -q -m "data: $(jq -r .asof manifest.json)"; git push -q; }
+          # another push can land while this run works (a later run, an edit to the lists): rebase onto it, keeping this manifest
+          git diff --staged --quiet || { git commit -q -m "data: $(jq -r .asof manifest.json)"; git push -q || { git pull -q --rebase -X theirs && git push -q; }; }

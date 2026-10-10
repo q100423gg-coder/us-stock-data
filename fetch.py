@@ -17,7 +17,8 @@ Output (out/):
 
 Every run re-downloads the whole window, so splits and Yahoo's late corrections of the newest
 bar are picked up by the next run. Tickers that fail keep their rows from the previous run
-(prev/prices.parquet, downloaded by the workflow).
+(prev/prices.parquet, downloaded by the workflow), and when Yahoo leaves out a session the previous
+run already had, that run's bars for it are kept, so a rerun never moves the data backwards.
 """
 import json
 import re
@@ -199,12 +200,18 @@ def main():
 
     parts = [f.assign(ticker=t) for t, f in got.items() if len(f)]
     prices = pd.concat(parts, ignore_index=True)
-    kept = 0
-    if failed and PREV.exists():                             # keep yesterday's rows for today's failures
+    kept = filled = 0
+    if PREV.exists():
+        # keep the previous run's rows for today's failures, and the previous run's newer sessions for the rest:
+        # Yahoo's daily bars sometimes leave the newest session out for a while (seen around 00:00 UTC), and a
+        # rerun must never publish older data than the release already has. Today's bars win where both exist.
         prev = pd.read_parquet(PREV)
-        prev = prev[prev["ticker"].isin(failed)]
-        kept = prev["ticker"].nunique()
-        prices = pd.concat([prices, prev], ignore_index=True)
+        last = prices.groupby("ticker")["date"].max()
+        newest = prev["ticker"].map(last)
+        keep_f = prev["ticker"].isin(failed)
+        keep_n = newest.notna() & (prev["date"] > newest)
+        kept, filled = int(prev.loc[keep_f, "ticker"].nunique()), int(prev.loc[keep_n, "ticker"].nunique())
+        prices = pd.concat([prices, prev[keep_f | keep_n]], ignore_index=True)
     prices = prices[["date", "ticker", "open", "high", "low", "close", "volume"]]
     prices = prices.drop_duplicates(["ticker", "date"], keep="first").sort_values(["ticker", "date"])
     prices["volume"] = prices["volume"].astype("float64")
@@ -217,7 +224,7 @@ def main():
         asof=asof.strftime("%Y-%m-%d") if pd.notna(asof) else None,
         tickers=int(prices["ticker"].nunique()), rows=int(len(prices)), universe=len(tickers),
         min_cap=MIN_CAP, start=start, failed=len(failed), kept_from_previous=int(kept),
-        failed_tickers=sorted(failed)[:300],
+        newer_from_previous=int(filled), failed_tickers=sorted(failed)[:300],
     )
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=1))
     print(json.dumps({k: v for k, v in manifest.items() if k != "failed_tickers"}), flush=True)
