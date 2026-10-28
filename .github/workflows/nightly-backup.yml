@@ -1,0 +1,86 @@
+name: nightly-backup
+
+# GitHub sometimes drops or badly delays scheduled runs: on 2026-10-28 none of the nightly jobs started, and the
+# morning refresh had nothing new to show. Later in the evening this job looks at what ran since 20:00 UTC and
+# starts whatever did not (or failed): the macro/earnings job, and the price job followed by the company-data job.
+on:
+  schedule:
+    - cron: "20 23 * * 1-5"     # 08:20 KST, about an hour after the usual finish
+    - cron: "5 0 * * 2-6"       # 09:05 KST, a second look (still inside the radar refresh's 2-hour wait)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Start these even if they already ran today (macro, nightly)"
+        default: ""
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: nightly-backup
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      FORCE: ${{ github.event.inputs.force || '' }}
+    steps:
+      - name: Start the nightly jobs that did not run
+        run: |
+          set -u
+          # the evening's window starts at the last 20:00 UTC (the nightly jobs are scheduled 22:05-22:17 UTC)
+          if [ "$(date -u +%H)" -lt 20 ]; then day=yesterday; else day=today; fi
+          since=$(date -u -d "$day 20:00" +%Y-%m-%dT%H:%M:%SZ)
+          echo "runs since $since"
+          # runs of a workflow since then that are still going or that succeeded
+          alive() {
+            gh run list --workflow "$1" --limit 20 --json status,conclusion,createdAt \
+              --jq "[.[] | select(.createdAt >= \"$since\") | select(.status != \"completed\" or .conclusion == \"success\")] | length"
+          }
+          forced() { case ",$FORCE," in *",$1,"*) return 0;; esac; return 1; }
+
+          m=$(alive macro.yml) || m=""
+          if [ -z "$m" ]; then
+            echo "::warning::could not list the macro-and-earnings runs; leaving it alone"
+          elif [ "$m" -eq 0 ] || forced macro; then
+            echo "macro-and-earnings did not run since $since: starting it"
+            gh workflow run macro.yml
+          else
+            echo "macro-and-earnings ran or is running"
+          fi
+
+          p=$(alive nightly-prices.yml) || p=""
+          if [ -z "$p" ]; then
+            echo "::warning::could not list the nightly-prices runs; leaving it alone"
+            exit 0
+          fi
+          if [ "$p" -gt 0 ] && ! forced nightly; then
+            echo "nightly-prices ran or is running: nothing to do"
+            exit 0
+          fi
+          echo "nightly-prices did not run since $since: starting it"
+          t0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run nightly-prices.yml
+          id=""
+          for i in $(seq 1 20); do
+            sleep 15
+            id=$(gh run list --workflow nightly-prices.yml --event workflow_dispatch --limit 5 --json databaseId,createdAt \
+                   --jq "[.[] | select(.createdAt >= \"$t0\")] | .[0].databaseId // empty")
+            [ -n "$id" ] && break
+          done
+          if [ -z "$id" ]; then echo "::warning::the started nightly-prices run did not show up"; exit 0; fi
+          gh run watch "$id" --interval 30 --exit-status > /dev/null || echo "::warning::nightly-prices run $id did not succeed"
+          # the company-data job normally follows the price job by itself; start it if it has not within 2 minutes
+          sleep 120
+          n=$(gh run list --workflow fundamentals.yml --limit 10 --json createdAt --jq "[.[] | select(.createdAt >= \"$t0\")] | length")
+          if [ "$n" -eq 0 ]; then
+            echo "fundamentals did not follow: starting it"
+            gh workflow run fundamentals.yml
+          else
+            echo "fundamentals followed the price job"
+          fi
