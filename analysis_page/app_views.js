@@ -18,6 +18,7 @@ function viewShell(title, sub) {
 // ---------------------------------------------------------------- home
 async function renderHome() {
   const wrap = viewShell(null);
+  wrap.append(briefPanel());
   const wl = watchlist();
   const wlPanel = h("section", { class: "panel" }, h("div", { class: "ph" }, h("h2", null, "관심 종목"), h("span", { class: "sub" }, wl.length ? `${wl.length}종목 · 이 브라우저에 저장` : "")));
   if (wl.length) {
@@ -84,6 +85,59 @@ async function renderHome() {
       strip.append(macroMini(key, s, rd.items[key]));
     }
   }).catch(() => { clear(strip).append(h("p", { class: "note" }, "매크로 데이터를 불러오지 못했어요.")); });
+}
+// ---------------------------------------------------------------- market brief: why the market moved in the last session
+function briefPanel() {
+  const panel = h("section", { class: "panel brief", "aria-label": "시장 브리핑" },
+    h("div", { class: "ph" }, h("h2", null, "시장은 왜 움직였나"), h("span", { class: "sub" }, "불러오는 중…")));
+  loadBrief().then((b) => fillBrief(panel, b)).catch(() => panel.remove());   // no brief yet: no panel
+  return panel;
+}
+function fillBrief(panel, b) {
+  if (!b || !b.headline || !(b.drivers || []).length) { panel.remove(); return; }
+  const src = b.sources || [];
+  const refs = (ids) => (ids || []).filter((i) => src[i - 1]).map((i) => h("a", { class: "sref", href: src[i - 1].url, target: "_blank", rel: "noopener",
+    title: [src[i - 1].site, src[i - 1].title].filter(Boolean).join(" · "), "aria-label": `출처 ${i}: ${src[i - 1].site || src[i - 1].title}` }, String(i)));
+  const last = DATA.dates[DATA.dates.length - 1];
+  const made = b.made ? new Date(b.made) : null;
+  const madeTxt = made && !isNaN(made) ? `${made.getMonth() + 1}/${made.getDate()} ${String(made.getHours()).padStart(2, "0")}:${String(made.getMinutes()).padStart(2, "0")} 정리` : "";
+  const tkChip = (t, ch) => h("button", { type: "button", class: "btk", onclick: () => go("company", t), disabled: !row(t),
+    title: row(t) ? dispName(t) + " 종목 페이지" : t }, h("b", null, t), isNum(ch) ? h("span", { class: "n " + cls(ch) }, fmtP(ch, 1)) : null);
+  clear(panel);
+  // the details fold away (per viewer, remembered) so the watchlist is one tap away on a phone
+  const body = h("div", { class: "bbody", id: "brief-body" });
+  let folded = !!LS.get("briefFolded", false);
+  const fold = h("button", { type: "button", class: "linkish", "aria-controls": "brief-body" });
+  const setFold = (v) => { folded = v; body.hidden = v; fold.textContent = v ? "자세히 보기" : "접기"; fold.setAttribute("aria-expanded", String(!v)); };
+  fold.onclick = () => { setFold(!folded); LS.set("briefFolded", folded); };
+  panel.append(h("div", { class: "ph" }, h("h2", null, "시장은 왜 움직였나"),
+    h("span", { class: "bmeta" }, h("span", { class: "sub" }, [fmtD(b.asof, "mdw") + " 미국 장", madeTxt].filter(Boolean).join(" · ")), fold)));
+  if (last && b.asof < last) panel.append(h("p", { class: "bstale" },
+    `${fmtD(b.asof, "md")} 장 브리핑이에요. 가장 최근 장(${fmtD(last, "md")}) 브리핑은 아직 준비되지 않았어요.`));
+  panel.append(h("p", { class: "bhl" }, b.headline));
+  if ((b.tape || []).length) panel.append(h("div", { class: "btape", "aria-label": "지수·자산 ETF 종가 등락" },
+    b.tape.map((x) => h("span", { class: "chip", title: x.t }, x.label, h("b", { class: "n " + cls(x.ch) }, fmtP(x.ch, 2))))));
+  panel.append(body);
+  setFold(folded);
+  if ((b.sectors || []).length) body.append(h("div", { class: "bsec", "aria-label": "업종 ETF 종가 등락" }, h("span", { class: "lb" }, "업종"),
+    b.sectors.map((x) => h("span", { class: "chip " + cls(x.ch), title: x.t }, x.label, h("b", { class: "n" }, fmtP(x.ch, 1))))));
+  const drv = h("ol", { class: "bdrv" }, b.drivers.map((d) => h("li", null,
+    h("b", null, d.title, d.ah ? h("span", { class: "tag bah" }, "장 마감 후") : null),
+    h("p", null, d.body, ...refs(d.src)),
+    (d.tickers || []).length ? h("div", { class: "btks" }, d.tickers.map((t) => tkChip(t, d.ch && d.ch[t]))) : null)));
+  const left = h("div", { class: "bcol" }, h("h3", { class: "sub-h" }, "핵심 이슈"), drv);
+  const right = h("div", { class: "bcol" });
+  const mv = (b.movers || []).slice().sort((x, y) => (isNum(y.ch) ? y.ch : -1e9) - (isNum(x.ch) ? x.ch : -1e9));
+  if (mv.length) right.append(h("h3", { class: "sub-h" }, "크게 움직인 종목"), h("div", { class: "bmov" }, mv.map((m) => h("div", { class: "bmv" },
+    h("button", { type: "button", onclick: () => go("company", m.t), disabled: !row(m.t) }, h("b", null, m.t), h("span", null, row(m.t) ? dispName(m.t) : "")),
+    h("span", { class: "r n " + cls(m.ch) }, isNum(m.ch) ? fmtP(m.ch, 1) : ""),
+    h("p", null, m.why, ...refs(m.src))))));
+  if ((b.next || []).length) right.append(h("h3", { class: "sub-h" }, "다음에 볼 일정"), h("ul", { class: "bnext" }, b.next.map((x) => h("li", null, x))));
+  body.append(h("div", { class: "bgrid" }, left, right));
+  if (src.length) body.append(h("details", { class: "bsrc" }, h("summary", null, `출처 ${src.length}곳`, h("span", { class: "muted" }, " · 본문의 번호를 누르면 해당 기사가 열려요")),
+    h("ol", null, src.map((s) => h("li", null, s.site ? h("span", { class: "st" }, s.site) : null,
+      h("a", { href: s.url, target: "_blank", rel: "noopener" }, s.title || s.url))))));
+  body.append(h("p", { class: "note" }, "매일 아침 그날의 시장 기사를 찾아 자동으로 정리한 요약이에요. 등락률은 이 페이지의 종가 데이터(지수·업종은 ETF 기준)이고, 이유는 출처 기사에 따른 것이에요. 투자 판단 전에 원문을 확인하세요."));
 }
 function watchCard(t) {
   const r = row(t);

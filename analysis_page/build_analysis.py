@@ -14,6 +14,13 @@ Inputs
   page            the assembled page (src/index.html.txt of the published artifact), or
   page-dir        the page sources (shell.html + *.js) to assemble a new index.html
 
+Market brief (the home page's "왜 움직였나" card, written by the daily task from the news):
+  build_analysis.py --brief-facts [--out site]          after a build: the session's numbers as JSON (index and
+                                                        sector ETFs, biggest large-cap movers, recent reports,
+                                                        upcoming reports) for the research
+  build_analysis.py --add-brief brief.json [--out site] checks brief.json and adds it as site/data/brief.json
+                                                        (and to publish.json); a bad file is reported and skipped
+
 Output: site/index.html, site/data/{universe,calendar,macro,meta}.json, site/data/f/NN.json,
         site/src/build_analysis.py.txt, site/src/index.html.txt, and site/publish.json (the file list).
 Exit code 3 with --check-fresh when the bundle's prices are older than the latest finished US session.
@@ -72,6 +79,113 @@ def ko_tables(template_text):
     return out
 
 
+INDEX_ETF = [("SPY", "S&P 500"), ("QQQ", "나스닥 100"), ("DIA", "다우"), ("IWM", "러셀 2000"), ("SOXX", "반도체"),
+             ("TLT", "미국 장기채"), ("GLD", "금"), ("USO", "원유")]
+SECTOR_ETF = [("XLK", "기술"), ("XLC", "커뮤니케이션"), ("XLY", "경기소비재"), ("XLF", "금융"), ("XLV", "헬스케어"),
+              ("XLI", "산업재"), ("XLP", "필수소비재"), ("XLE", "에너지"), ("XLU", "유틸리티"), ("XLRE", "부동산"), ("XLB", "소재")]
+
+
+def brief_facts(out):
+    """The built site's numbers for the latest session, as the research's starting point."""
+    data = out / "data"
+    meta = json.loads((data / "meta.json").read_text(encoding="utf-8"))
+    u = json.loads((data / "universe.json").read_text(encoding="utf-8"))
+    c = u["cols"]
+    keys = ("t", "n", "q", "s", "ch", "mc", "lr", "ls", "nx", "sp5")
+    rows = [{k: (c[k][i] if k in c else None) for k in keys} for i in range(len(c["t"]))]
+    by = {r["t"]: r for r in rows}
+    ko = u.get("ko") or {}
+    sec = [x[1] for x in u.get("sectors") or []]
+    name = lambda t: (ko.get(t) or "").split("|")[0] or by[t]["n"]
+    num = lambda v: isinstance(v, (int, float))
+    dates = u.get("dates") or []
+    asof = meta.get("prices_asof") or (dates[-1] if dates else None)
+    prev = dates[-2] if len(dates) > 1 else None
+    one = lambda r: dict(t=r["t"], name=name(r["t"]), ch=r["ch"], mc_b=round(r["mc"], 1) if num(r["mc"]) else None,
+                         sector=sec[r["s"]] if num(r["s"]) and 0 <= r["s"] < len(sec) else None)
+    eq = [r for r in rows if r["q"] == "EQUITY" and num(r["ch"]) and num(r["mc"])]
+    big = [r for r in eq if r["mc"] >= 20]
+    soon = sorted((r for r in eq if r["mc"] >= 50 and r["nx"] and asof and r["nx"] > asof), key=lambda r: (r["nx"], -r["mc"]))
+    facts = dict(
+        asof=asof,
+        indices=[dict(t=t, label=l, ch=by[t]["ch"]) for t, l in INDEX_ETF if t in by],
+        sectors=sorted([dict(t=t, label=l, ch=by[t]["ch"]) for t, l in SECTOR_ETF if t in by and num(by[t]["ch"])],
+                       key=lambda x: -x["ch"]),
+        up=[one(r) for r in sorted(big, key=lambda r: -r["ch"])[:10]],
+        down=[one(r) for r in sorted(big, key=lambda r: r["ch"])[:10]],
+        mega=[one(r) for r in sorted(eq, key=lambda r: -r["mc"])[:10]],
+        reported=[dict(one(r), reported=r["lr"], surprise_pct=r["ls"]) for r in sorted(
+            (r for r in big if r["lr"] in (asof, prev)), key=lambda r: -abs(r["ch"]))[:15]],
+        upcoming=[dict(one(r), date=r["nx"]) for r in soon[:12]],
+        note="ch: % change on the session; mc_b: market cap in $B; reported = the latest report date (a report "
+             "after the close moves the price the next session)",
+    )
+    print(json.dumps(facts, ensure_ascii=False, indent=1))
+
+
+def add_brief(path, out):
+    """Check the written brief, attach the session's numbers from the built data, and add it to the site.
+
+    brief.json (Korean text, written by the daily task from the news; numbers are refs into sources, 1-based):
+      {"asof": "YYYY-MM-DD", "headline": "...",
+       "drivers": [{"title": "...", "body": "...", "tickers": ["VRT"], "src": [1, 2]}],      1-6 items; add "ah": true
+                                                                                    to a driver about after-hours news
+                                                                                    (its chips then show no session move)
+       "movers":  [{"t": "VRT", "why": "...", "src": [3]}],                                   0-10 items
+       "next":    ["..."],                                                                    0-5 items
+       "sources": [{"title": "...", "url": "https://...", "site": "Reuters"}]}                1-16 items
+    A bad file is reported (BRIEF_SKIPPED=...) and left out; it never fails the build.
+    """
+    def txt(v, n):
+        return " ".join(str(v or "").replace("\ufffd", "").split())[:n]
+    try:
+        b = json.loads(Path(path).read_text(encoding="utf-8"))
+        src = [dict(title=txt(x.get("title"), 160), url=str(x.get("url") or "").strip(), site=txt(x.get("site"), 40))
+               for x in b.get("sources") or [] if isinstance(x, dict) and str(x.get("url") or "").startswith("https://")][:16]
+        ref = lambda v: sorted({i for i in (v or []) if isinstance(i, int) and 1 <= i <= len(src)})
+        tick = lambda v: txt(v, 12).upper().replace(".", "-")
+        drv = [dict(title=txt(d.get("title"), 80), body=txt(d.get("body"), 700), ah=d.get("ah") is True,
+                    tickers=list(dict.fromkeys(tick(t) for t in d.get("tickers") or [] if txt(t, 12)))[:8], src=ref(d.get("src")))
+               for d in b.get("drivers") or [] if isinstance(d, dict) and txt(d.get("title"), 80) and txt(d.get("body"), 700)][:6]
+        mov = [dict(t=tick(m.get("t")), why=txt(m.get("why"), 240), src=ref(m.get("src")))
+               for m in b.get("movers") or [] if isinstance(m, dict) and txt(m.get("t"), 12) and txt(m.get("why"), 240)][:10]
+        asof = txt(b.get("asof"), 10)
+        datetime.strptime(asof, "%Y-%m-%d")
+        brief = dict(asof=asof, made=datetime.now(KST).isoformat(timespec="minutes"), headline=txt(b.get("headline"), 300),
+                     drivers=drv, movers=mov, next=[txt(x, 200) for x in b.get("next") or [] if txt(x, 200)][:5], sources=src)
+        if not (brief["headline"] and drv and src):
+            raise ValueError("headline, at least one driver and at least one https source are required")
+    except Exception as e:
+        print(f"BRIEF_SKIPPED={type(e).__name__}: {e}")
+        return
+    # the session's moves from the built data (only when the brief is about that session)
+    data = out / "data"
+    try:
+        meta = json.loads((data / "meta.json").read_text(encoding="utf-8"))
+        c = json.loads((data / "universe.json").read_text(encoding="utf-8"))["cols"]
+        chg = {t: v for t, v in zip(c["t"], c["ch"]) if isinstance(v, (int, float))}
+    except Exception:
+        meta, chg = {}, {}
+    if chg and meta.get("prices_asof") == asof:
+        brief["tape"] = [dict(t=t, label=l, ch=chg[t]) for t, l in INDEX_ETF if t in chg]
+        brief["sectors"] = sorted((dict(t=t, label=l, ch=chg[t]) for t, l in SECTOR_ETF if t in chg), key=lambda x: -x["ch"])
+        for m in mov:
+            m["ch"] = chg.get(m["t"])
+        for d in drv:
+            if not d["ah"]:
+                d["ch"] = {t: chg[t] for t in d["tickers"] if t in chg}
+    else:
+        print(f"BRIEF_NOTE=prices are for {meta.get('prices_asof')}, the brief for {asof}: no session numbers attached")
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "brief.json").write_text(json.dumps(brief, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    pub = out / "publish.json"
+    files = json.loads(pub.read_text(encoding="utf-8")) if pub.exists() else []
+    if "data/brief.json" not in files:
+        files.append("data/brief.json")
+        pub.write_text(json.dumps(sorted(files), indent=0), encoding="utf-8")
+    print(f"BRIEF_ADDED={asof} drivers={len(drv)} movers={len(mov)} next={len(brief['next'])} sources={len(src)}")
+
+
 def assemble_page(page_dir, cfg):
     page_dir = Path(page_dir)
     shell = (page_dir / "shell.html").read_text(encoding="utf-8")
@@ -89,9 +203,15 @@ def main():
     ap.add_argument("--page-dir")
     ap.add_argument("--out", default=str(HERE / "site"))
     ap.add_argument("--check-fresh", action="store_true")
+    ap.add_argument("--brief-facts", action="store_true")
+    ap.add_argument("--add-brief")
     a = ap.parse_args()
 
     out = Path(a.out)
+    if a.brief_facts:
+        return brief_facts(out)
+    if a.add_brief:
+        return add_brief(a.add_brief, out)
     work = out.parent / (out.name + "_work")
     work.mkdir(parents=True, exist_ok=True)
     bundle = Path(a.bundle) if a.bundle else download("analysis_bundle.tar.gz", work / "analysis_bundle.tar.gz")

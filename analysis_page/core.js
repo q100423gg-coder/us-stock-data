@@ -267,6 +267,11 @@ async function loadCal() {
   if (!DATA.cal) DATA.cal = loadJSON("data/calendar.json").catch((e) => { DATA.cal = null; throw e; });
   return DATA.cal;
 }
+/** the morning's market brief (data/brief.json, written from the news by the daily task); absent before the first one */
+async function loadBrief() {
+  if (!DATA.brief) DATA.brief = loadJSON("data/brief.json").catch((e) => { DATA.brief = null; throw e; });
+  return DATA.brief;
+}
 
 // ---------------------------------------------------------------- search
 let SEARCH = null;
