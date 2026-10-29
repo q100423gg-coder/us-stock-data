@@ -8,7 +8,8 @@
 - 실행: 평일 22:17 UTC(한국 시간 다음 날 오전 7시 17분), 저장소 Actions 탭에서 수동 실행도 가능
 - 결과 파일: `releases/download/data/prices.parquet`, `universe.csv`, `manifest.json`
 - 기업 분석 노트용:
-  - `macro.json`(FRED 매크로 지표 29개 + 국채 수익률 곡선), `earnings_calendar.json`(Nasdaq 실적 발표 예정일) —
+  - `macro.json`(FRED 매크로 지표 29개 + 국채 수익률 곡선), `earnings_calendar.json`(Nasdaq 실적 발표 예정일),
+    `nasdaq100.json`(그날의 나스닥 100 구성종목, 레이더 시장 폭 패널용) —
     `macro.yml`이 평일 22:05 UTC에 `macro.py`로 받아요
   - `fund_store.json.gz`(종목별 기업 데이터 누적본), `analysis_bundle.tar.gz`(페이지용 데이터 묶음) —
     `fundamentals.yml`이 가격 수집이 끝나면 `fundamentals.py`로 야후 파이낸스에서 받아요

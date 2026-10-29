@@ -39,7 +39,7 @@ jobs:
         if: always()
         run: |
           gh release view data >/dev/null 2>&1 || gh release create data --title "Daily US prices" --notes "Updated by the nightly workflows. Download: releases/download/data/<file>"
-          for f in out/macro.json out/earnings_calendar.json out/macro_status.json; do
+          for f in out/macro.json out/earnings_calendar.json out/nasdaq100.json out/macro_status.json; do
             if [ -s "$f" ]; then gh release upload data "$f" --clobber; fi
           done
         env:

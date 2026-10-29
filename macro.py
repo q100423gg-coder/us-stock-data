@@ -6,6 +6,8 @@ Runs on GitHub Actions (macro.yml) and writes:
                               observations (daily series: last 2 years daily + weekly before that)
   out/earnings_calendar.json  {TICKER: {"d": "YYYY-MM-DD", "t": "bmo"|"amc"|"", "eps": "$1.98",
                               "q": "Sep/2026", "n": "12"}} — the next report date per ticker
+  out/nasdaq100.json          {"updated_at": ..., "tickers": [...]} — today's Nasdaq-100 members (Nasdaq's list),
+                              for the radar's breadth panel
 
 FRED series are read from the public fredgraph.csv endpoint (no API key). Each source is optional:
 a failure leaves that series or the calendar out instead of failing the run.
@@ -249,6 +251,34 @@ def earnings_calendar(days=80, budget=300):
     return out
 
 
+def nasdaq100():
+    """Today's Nasdaq-100 members from Nasdaq's public list -> sorted tickers ([] when it can't be read)."""
+    headers = {"Accept": "application/json, text/plain, */*", "Origin": "https://www.nasdaq.com",
+               "Referer": "https://www.nasdaq.com/", "Accept-Language": "en-US,en;q=0.9"}
+    t0 = time.time()
+    try:
+        j = json.loads(get("https://api.nasdaq.com/api/quote/list-type/nasdaq100", headers, tries=2, timeout=20))
+    except Exception as e:
+        STATUS["nasdaq100"] = {"err": f"{type(e).__name__}: {e}"[:200]}
+        return []
+    rows = []
+
+    def walk(x):                        # the rows sit under data.data.rows; don't depend on the exact nesting
+        if isinstance(x, dict):
+            if isinstance(x.get("rows"), list):
+                rows.extend(r for r in x["rows"] if isinstance(r, dict))
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(j)
+    out = sorted({str(r.get("symbol") or "").strip().upper().replace(".", "-").replace("/", "-") for r in rows} - {""})
+    STATUS["nasdaq100"] = {"tickers": len(out), "sec": round(time.time() - t0, 1)}
+    return out
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     # `timeout` sends SIGTERM: turn it into SystemExit so the status file below still gets written
@@ -266,6 +296,12 @@ def main():
             payload = dict(updated_at=m["updated_at"], tickers=cal)
             (OUT / "earnings_calendar.json").write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
         print(f"earnings calendar: {len(cal)} tickers", flush=True)
+        ndx = nasdaq100()
+        if len(ndx) >= 90:              # a short or empty list is a bad read: keep yesterday's file in the release
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            (OUT / "nasdaq100.json").write_text(json.dumps(dict(updated_at=stamp, tickers=ndx), separators=(",", ":")),
+                                                encoding="utf-8")
+        print(f"nasdaq-100: {len(ndx)} tickers", flush=True)
     finally:
         STATUS["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         STATUS["total_sec"] = round(time.time() - t0, 1)
