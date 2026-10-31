@@ -1,9 +1,8 @@
 name: nightly-prices
 
 on:
-  schedule:
-    # 22:17 UTC, Mon-Fri: about 2 hours after the US close (1 hour in winter), 07:17 KST the next morning
-    - cron: "17 22 * * 1-5"
+  # started every weekday night at 22:20 UTC by nightly-backup.yml: about 2 hours after the US close (1 hour in
+  # winter), 07:20 KST the next morning. GitHub's own cron for this job ran hours late (2026-10-28..30).
   workflow_dispatch:
   push:
     branches: [main]

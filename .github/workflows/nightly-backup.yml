@@ -1,12 +1,17 @@
 name: nightly-backup
 
-# GitHub sometimes drops or badly delays scheduled runs: on 2026-10-28 none of the nightly jobs started, and the
-# morning refresh had nothing new to show. Later in the evening this job looks at what ran since 20:00 UTC and
-# starts whatever did not (or failed): the macro/earnings job, and the price job followed by the company-data job.
+# Starts the nightly jobs: the macro/earnings job, and the price job followed by the company-data job.
+# GitHub's scheduler runs crons late, sometimes by hours: on 2026-10-28..30 the 22:05/22:17 UTC crons of those jobs
+# started around 01:30-02:00 UTC, after the morning refreshes (07:50/08:50 KST) had given up waiting. A dispatched
+# run starts right away, so this job is scheduled hours early, waits until 22:20 UTC (the session's bars are final
+# by then) and dispatches the jobs itself. The later crons are second looks. Every run starts only what has not run
+# (or failed) since 20:00 UTC, so the jobs never run twice in a night; runs of this job queue one after another.
 on:
   schedule:
-    - cron: "20 23 * * 1-5"     # 08:20 KST, about an hour after the usual finish
-    - cron: "5 0 * * 2-6"       # 09:05 KST, a second look (still inside the radar refresh's 2-hour wait)
+    - cron: "10 18 * * 1-5"     # early: waits until 22:20 UTC, so a scheduler delay of up to ~4 hours costs nothing
+    - cron: "40 19 * * 1-5"     # early, a second chance
+    - cron: "20 23 * * 1-5"     # 08:20 KST, a later look
+    - cron: "5 0 * * 2-6"       # 09:05 KST, a last look
   workflow_dispatch:
     inputs:
       force:
@@ -24,16 +29,23 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 345         # an early start sleeps up to ~4.5 hours (the limit for a job is 6 hours)
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       FORCE: ${{ github.event.inputs.force || '' }}
     steps:
+      - name: Wait until 22:20 UTC when started early
+        run: |
+          now=$(date -u +%s); target=$(date -u -d "today 22:20" +%s)
+          if [ "$(date -u +%H)" -ge 17 ] && [ "$now" -lt "$target" ]; then
+            echo "started $(date -u +%H:%M) UTC; waiting $(( (target - now) / 60 )) minutes until 22:20 UTC"
+            sleep $(( target - now ))
+          fi
       - name: Start the nightly jobs that did not run
         run: |
           set -u
-          # the evening's window starts at the last 20:00 UTC (the nightly jobs are scheduled 22:05-22:17 UTC)
+          # the evening's window starts at the last 20:00 UTC (this job starts the nightly jobs at 22:20 UTC)
           if [ "$(date -u +%H)" -lt 20 ]; then day=yesterday; else day=today; fi
           since=$(date -u -d "$day 20:00" +%Y-%m-%dT%H:%M:%SZ)
           echo "runs since $since"

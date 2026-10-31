@@ -1,9 +1,7 @@
 name: macro-and-earnings
 
 on:
-  schedule:
-    # 22:05 UTC, Mon-Fri (07:05 KST): before the price job, so the files are ready for the morning refresh
-    - cron: "5 22 * * 1-5"
+  # started every weekday night at 22:20 UTC by nightly-backup.yml (GitHub's own cron for this job ran hours late)
   workflow_dispatch:
   push:
     branches: [main]
