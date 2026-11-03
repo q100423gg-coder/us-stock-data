@@ -6,10 +6,12 @@ name: nightly-backup
 # run starts right away, so this job is scheduled hours early, waits until 22:20 UTC (the session's bars are final
 # by then) and dispatches the jobs itself. The later crons are second looks. Every run starts only what has not run
 # (or failed) since 20:00 UTC, so the jobs never run twice in a night; runs of this job queue one after another.
+# Edit the crons below only in a commit WITHOUT "[skip ci]": GitHub registers a changed schedule while it processes
+# the push, and a skipped push left the old schedule in place (2026-11-02: no early start, the morning waited).
 on:
   schedule:
-    - cron: "10 18 * * 1-5"     # early: waits until 22:20 UTC, so a scheduler delay of up to ~4 hours costs nothing
-    - cron: "40 19 * * 1-5"     # early, a second chance
+    - cron: "12 18 * * 1-5"     # early: waits until 22:20 UTC, so a scheduler delay of up to ~4 hours costs nothing
+    - cron: "42 19 * * 1-5"     # early, a second chance
     - cron: "20 23 * * 1-5"     # 08:20 KST, a later look
     - cron: "5 0 * * 2-6"       # 09:05 KST, a last look
   workflow_dispatch:
