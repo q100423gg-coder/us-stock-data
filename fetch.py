@@ -183,6 +183,35 @@ def download(tickers, start):
     return got, failed
 
 
+def expected_session(now_ny):
+    """The newest New York session that has closed (16:15 with a margin; weekdays, holidays are not modelled)."""
+    d = now_ny.date()
+    if now_ny.hour * 60 + now_ny.minute < 16 * 60 + 15:
+        d -= timedelta(days=1)
+    while d.weekday() > 4:
+        d -= timedelta(days=1)
+    return pd.Timestamp(d)
+
+
+def wait_for_newest_session(start, tries=4, pause=900):
+    """Yahoo's daily bars sometimes leave out the newest session for a while (seen 00:00-02:00 UTC: the runs at
+    01:34 UTC on 2026-11-10 and 01:56 UTC on 2026-11-17 got Friday's bars on a Monday night). Check SPY first and
+    wait for that session instead of publishing a new manifest with the old one; give up after about 45 minutes
+    (a market holiday has no new session) and publish what Yahoo has."""
+    exp = expected_session(datetime.now(NY))
+    for i in range(tries):
+        spy, _ = download(["SPY"], start)
+        last = spy["SPY"]["date"].max() if "SPY" in spy and len(spy["SPY"]) else None
+        if last is not None and last >= exp:
+            return
+        if i < tries - 1:
+            got = "nothing" if last is None else f"{last:%Y-%m-%d}"
+            print(f"Yahoo's bars end at {got} but the {exp:%Y-%m-%d} session has closed: "
+                  f"checking again in {pause // 60} minutes", flush=True)
+            time.sleep(pause)
+    print(f"still no {exp:%Y-%m-%d} bars (a holiday?): publishing what Yahoo has", flush=True)
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     uni = build_universe()
@@ -190,6 +219,7 @@ def main():
     start = (datetime.now(timezone.utc) - timedelta(days=DAYS)).strftime("%Y-%m-%d")
     print(f"universe: {len(tickers)} tickers (>= ${MIN_CAP / 1e9:.0f}B, S&P 500, ETFs, extras); start {start}", flush=True)
 
+    wait_for_newest_session(start)
     got, failed = download(tickers, start)
     if failed:                                               # one slower second pass for what failed
         print(f"retrying {len(failed)} tickers", flush=True)

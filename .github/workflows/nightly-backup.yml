@@ -1,17 +1,20 @@
 name: nightly-backup
 
 # Starts the nightly jobs: the macro/earnings job, and the price job followed by the company-data job.
-# GitHub's scheduler runs crons late, sometimes by hours: on 2026-10-28..30 the 22:05/22:17 UTC crons of those jobs
-# started around 01:30-02:00 UTC, after the morning refreshes (07:50/08:50 KST) had given up waiting. A dispatched
-# run starts right away, so this job is scheduled hours early, waits until 22:20 UTC (the session's bars are final
-# by then) and dispatches the jobs itself. The later crons are second looks. Every run starts only what has not run
-# (or failed) since 20:00 UTC, so the jobs never run twice in a night; runs of this job queue one after another.
+# GitHub's scheduler runs this repository's crons hours late: 3.5 hours at the end of October, 5-8 hours in November
+# (the 18:12 UTC cron started between 23:06 and 01:51 UTC), after the morning refreshes (07:50/08:50 KST) had waited.
+# A dispatched run starts right away, so this job is scheduled many hours early, waits until 22:20 UTC (the session's
+# bars are final by then) and dispatches the jobs itself. A job may run 6 hours at most: a run with more than 5 hours
+# to wait sleeps 5 hours and then hands over to a fresh run of itself, which waits for the rest. The later crons are
+# second looks. Every run starts only what has not run (or failed) since 20:00 UTC, so the jobs never run twice in a
+# night; runs of this job queue one after another.
 # Edit the crons below only in a commit WITHOUT "[skip ci]": GitHub registers a changed schedule while it processes
 # the push, and a skipped push left the old schedule in place (2026-11-02: no early start, the morning waited).
 on:
   schedule:
-    - cron: "12 18 * * 1-5"     # early: waits until 22:20 UTC, so a scheduler delay of up to ~4 hours costs nothing
-    - cron: "42 19 * * 1-5"     # early, a second chance
+    - cron: "12 12 * * 1-5"     # very early: waits (handing over to itself) until 22:20 UTC; covers delays up to ~10 hours
+    - cron: "42 13 * * 1-5"     # very early, a second chance
+    - cron: "12 18 * * 1-5"     # early, a third chance
     - cron: "20 23 * * 1-5"     # 08:20 KST, a later look
     - cron: "5 0 * * 2-6"       # 09:05 KST, a last look
   workflow_dispatch:
@@ -31,7 +34,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 345         # an early start sleeps up to ~4.5 hours (the limit for a job is 6 hours)
+    timeout-minutes: 345         # sleeps at most 5 hours, then hands over (the limit for a job is 6 hours)
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -40,11 +43,19 @@ jobs:
       - name: Wait until 22:20 UTC when started early
         run: |
           now=$(date -u +%s); target=$(date -u -d "today 22:20" +%s)
-          if [ "$(date -u +%H)" -ge 17 ] && [ "$now" -lt "$target" ]; then
-            echo "started $(date -u +%H:%M) UTC; waiting $(( (target - now) / 60 )) minutes until 22:20 UTC"
-            sleep $(( target - now ))
+          if [ "$(date -u +%H)" -ge 10 ] && [ "$now" -lt "$target" ]; then
+            left=$(( target - now ))
+            if [ "$left" -gt 18000 ]; then
+              echo "started $(date -u +%H:%M) UTC, $(( left / 60 )) minutes before 22:20 UTC: sleeping 5 hours, then a fresh run waits for the rest"
+              sleep 18000
+              gh workflow run nightly-backup.yml && echo "HANDED_OVER=1" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "started $(date -u +%H:%M) UTC; waiting $(( left / 60 )) minutes until 22:20 UTC"
+            sleep "$left"
           fi
       - name: Start the nightly jobs that did not run
+        if: env.HANDED_OVER != '1'
         run: |
           set -u
           # the evening's window starts at the last 20:00 UTC (this job starts the nightly jobs at 22:20 UTC)
