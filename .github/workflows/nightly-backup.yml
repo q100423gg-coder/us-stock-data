@@ -2,7 +2,7 @@ name: nightly-backup
 
 # Starts the nightly jobs: the macro/earnings job, and the price job followed by the company-data job.
 # GitHub's scheduler runs this repository's crons hours late: 3.5 hours at the end of October, 5-8 hours in November
-# (the 18:12 UTC cron started between 23:06 and 01:51 UTC), after the morning refreshes (07:50/08:50 KST) had waited.
+# (the 18:12 UTC cron started between 23:06 and 01:51 UTC; the 12:12 UTC one at 20:48 UTC on 2026-11-17).
 # A dispatched run starts right away, so this job is scheduled many hours early, waits until 22:20 UTC (the session's
 # bars are final by then) and dispatches the jobs itself. A job may run 6 hours at most: a run with more than 5 hours
 # to wait sleeps 5 hours and then hands over to a fresh run of itself, which waits for the rest. The later crons are
@@ -12,7 +12,8 @@ name: nightly-backup
 # the push, and a skipped push left the old schedule in place (2026-11-02: no early start, the morning waited).
 on:
   schedule:
-    - cron: "12 12 * * 1-5"     # very early: waits (handing over to itself) until 22:20 UTC; covers delays up to ~10 hours
+    - cron: "12 10 * * 1-5"     # very early: waits (handing over to itself) until 22:20 UTC; covers delays up to ~12 hours
+    - cron: "12 12 * * 1-5"     # very early, another chance (on 2026-11-17 it started 8.6 hours late, at 20:48 UTC)
     - cron: "42 13 * * 1-5"     # very early, a second chance
     - cron: "12 18 * * 1-5"     # early, a third chance
     - cron: "20 23 * * 1-5"     # 08:20 KST, a later look

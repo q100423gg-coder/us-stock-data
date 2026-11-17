@@ -6,7 +6,7 @@
 - 대상: 시가총액 20억 달러 이상 미국 상장 종목(ADR 포함) + S&P 500 전 종목 + 지수·섹터 ETF + `extra_tickers.txt`
   + 레이더 'ETF 찾기'용 ETF 목록 `etf_tickers.txt`(한 줄에 `티커 | 분류 | 한국어 이름`, 개별 종목 레버리지 ETF는 제외)
 - 실행: 평일 22:20 UTC(한국 시간 다음 날 오전 7시 20분), 저장소 Actions 탭에서 수동 실행도 가능.
-  GitHub 예약 실행이 5~8시간씩 늦어서, `nightly-backup.yml`이 아주 일찍(12:12 UTC부터) 예약돼 있다가 22:20 UTC가 되면
+  GitHub 예약 실행이 5~8시간씩 늦어서, `nightly-backup.yml`이 아주 일찍(10:12 UTC부터) 예약돼 있다가 22:20 UTC가 되면
   매크로·가격 작업을 직접 시작해요(작업 하나는 6시간까지만 돌 수 있어 5시간마다 새 실행에 넘겨요. 그 뒤 08:20·09:05 KST에
   빠진 작업이 있는지 한 번 더 확인). 야후가 가장 최근 장의 일봉을 아직 안 내줄 때는 가격 작업이 15분 간격으로 최대 45분 기다려요
 - 결과 파일: `releases/download/data/prices.parquet`, `universe.csv`, `manifest.json`
